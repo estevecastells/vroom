@@ -57,12 +57,13 @@ jobs:
       - name: Test and build
         run: |
           cargo test --locked
-          cargo build --release --locked -p vroom
+          cargo build --release --locked -p vroom -p vroom-win
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist/vroom | Out-Null
           Copy-Item target/release/vroom.exe, LICENSE dist/vroom/
+          Copy-Item target/release/vroom-app.exe dist/vroom/Vroom.exe
           & dist/vroom/vroom.exe --json version
           Compress-Archive -Path dist/vroom -DestinationPath dist/vroom-windows-x64.zip
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

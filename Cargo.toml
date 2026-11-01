@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vroom-core", "crates/vroom-cloud", "crates/vroom"]
+members = ["crates/vroom-core", "crates/vroom-cloud", "crates/vroom", "crates/vroom-win"]
 
 [workspace.package]
 version = "0.1.1"
