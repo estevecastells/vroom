@@ -1,0 +1,15 @@
+[package]
+name = "vroom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+serde.workspace = true
+serde_json.workspace = true
+time = { version = "0.3.55", features = ["formatting", "parsing", "local-offset"] }
+ureq = { version = "3.5.0", features = ["json"] }
+vroom-cloud.workspace = true
+vroom-core.workspace = true

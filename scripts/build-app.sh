@@ -1,0 +1,50 @@
+#!/bin/bash
+# Build build/Vroom.app (menu bar recorder + the vroom CLI). Works with Command Line Tools only.
+# Signed with VROOM_SIGN_IDENTITY, else "Vroom Local Signing" if it exists
+# (scripts/make-signing-cert.sh), else ad hoc. A stable identity lets macOS keep
+# the Screen Recording permission across rebuilds; ad-hoc signatures change every build.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+app="build/Vroom.app"
+
+echo "==> Building the vroom CLI (release)"
+cargo build --release --locked -p vroom
+
+echo "==> Building the Swift app (release)"
+(cd app && swift build -c release --product Vroom)
+swift_bin="$(cd app && swift build -c release --show-bin-path)/Vroom"
+
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$swift_bin" "$app/Contents/MacOS/Vroom"
+cp target/release/vroom "$app/Contents/Resources/vroom"
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>io.github.estevecastells.vroom.app</string>
+  <key>CFBundleName</key><string>Vroom</string>
+  <key>CFBundleDisplayName</key><string>Vroom</string>
+  <key>CFBundleExecutable</key><string>Vroom</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>NSCameraUsageDescription</key><string>Vroom muestra tu cámara en una burbuja dentro de la grabación.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Vroom graba tu voz junto con la pantalla.</string>
+</dict>
+</plist>
+PLIST
+identity="${VROOM_SIGN_IDENTITY:-}"
+if [[ -z "$identity" ]]; then
+  # scripts/make-signing-cert.sh creates a stable local identity; fall back to ad hoc.
+  if security find-certificate -c "Vroom Local Signing" >/dev/null 2>&1; then identity="Vroom Local Signing"; else identity="-"; fi
+fi
+codesign --force --sign "$identity" "$app/Contents/Resources/vroom" >/dev/null
+codesign --force --sign "$identity" "$app" >/dev/null
+echo "==> Done: $root/$app"

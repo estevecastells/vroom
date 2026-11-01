@@ -1,0 +1,16 @@
+[package]
+name = "vroom-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+getrandom = "0.4.3"
+serde.workspace = true
+serde_json.workspace = true
+time = { version = "0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
+toml = "1.1.8"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,0 +1,17 @@
+{
+  "type": "config",
+  "config": {
+    "library": null,
+    "auto_upload": true,
+    "keep_local_days": 30,
+    "r2": {
+      "account_id": "0123456789abcdef0123456789abcdef",
+      "bucket": "vroom",
+      "access_key_id": "e1d2c3b4a5",
+      "public_url": "https://videos.example.com"
+    }
+  },
+  "path": "/Users/me/Library/Application Support/Vroom/config.toml",
+  "library": "/Users/me/Movies/Vroom",
+  "has_secret": true
+}
