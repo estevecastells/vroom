@@ -48,6 +48,20 @@ Measured on the same Mac (M5 Pro, 64 GB, macOS 26.6), Loom desktop 0.382.0 again
 
 Loom's recording figures need someone to drive its UI, so they are not in the table yet.
 
+### What $24 a month buys
+
+R2 charges $0.015 per GB stored per month, with the first 10 GB free and no fees for people watching. For $24 a month, the price of one Loom seat:
+
+| | |
+|---|---:|
+| Storage | **1,610 GB** |
+| Video at 1080p | **about 930 hours** |
+| Viewers and downloads | free, unlimited |
+
+Hours are worked out at 1.7 GB per hour, measured on 11 videos (3.7 hours) imported from Loom at 1080p. Vroom's own 1080p30 recordings use at most about 2 GB per hour (4.4 Mbit/s), and usually less, since frames are only encoded when the screen changes; at 2 GB per hour, $24 still holds about 800 hours. Requests cost extra but stay in cents: uploading a video is a few write operations at $4.50 per million.
+
+Put the other way round: a library of 56 hours (about 96 GB) costs about $1.30 a month, for everyone in the team.
+
 ## Features
 
 - **Pick what to record.** The whole screen, one window (click it), or an area (drag it). The camera shows as a round bubble you can drag, and the control bar is never in the video.
