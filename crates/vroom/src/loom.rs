@@ -258,6 +258,8 @@ impl Loom {
             // (`get_media`) so every hop goes through `check_media_url`.
             .https_only(true)
             .max_redirects(0)
+            // A proxy would be what `PublicOnly` resolves, not the media host.
+            .proxy(None)
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")
             .build();
         let agent = ureq::Agent::with_parts(config, DefaultConnector::default(), PublicOnly::default());
