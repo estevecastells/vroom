@@ -562,7 +562,11 @@ public final class AppModel {
 
     func createFolder(_ path: String) { folderCommand(["folder", "create", "--", path]) }
     func renameFolder(_ path: String, to new: String) { folderCommand(["folder", "rename", "--", path, new]) }
-    func deleteFolder(_ path: String) { folderCommand(["folder", "delete", "--", path]) }
+    /// Without `recordings`, what was inside moves to the folder above.
+    func deleteFolder(_ path: String, recordings: Bool = false, keepCloud: Bool = false) {
+        let flags = recordings ? ["--recordings"] + (keepCloud ? ["--keep-cloud"] : []) : []
+        folderCommand(["folder", "delete"] + flags + ["--", path])
+    }
 
     private func folderCommand(_ args: [String]) {
         guard let cli else { return }

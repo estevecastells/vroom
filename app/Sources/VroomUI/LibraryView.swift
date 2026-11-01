@@ -73,13 +73,38 @@ public struct LibraryView: View {
             isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }),
             presenting: deletingFolder
         ) { path in
-            Button("Eliminar carpeta", role: .destructive) {
-                if case let .folder(selected) = folder, selected == path || selected.hasPrefix(path + "/") { folder = .all }
-                model.deleteFolder(path)
+            let inside = recordings(in: path)
+            if inside.isEmpty {
+                Button("Eliminar carpeta", role: .destructive) { deleteFolder(path) }
+            } else if inside.contains(where: { $0.isInCloud || $0.status == .uploading }) {
+                Button("Eliminar carpeta y grabaciones de este Mac y de R2", role: .destructive) {
+                    deleteFolder(path, recordings: true, keepCloud: false)
+                }
+                Button("Eliminar carpeta y grabaciones solo de este Mac") { deleteFolder(path, recordings: true, keepCloud: true) }
+                Button("Eliminar solo la carpeta") { deleteFolder(path) }
+            } else {
+                Button("Eliminar carpeta y grabaciones", role: .destructive) { deleteFolder(path, recordings: true, keepCloud: true) }
+                Button("Eliminar solo la carpeta") { deleteFolder(path) }
             }
-        } message: { _ in
-            Text("Las grabaciones no se borran: pasan a la carpeta de arriba.")
+        } message: { path in
+            let count = recordings(in: path).count
+            if count == 0 {
+                Text("La carpeta está vacía.")
+            } else {
+                Text(count == 1 ? LocalizedStringKey("Contiene 1 grabación.") : LocalizedStringKey("Contiene \(count) grabaciones."))
+                    + Text(verbatim: " ") + Text("Si eliminas solo la carpeta, las grabaciones pasan a la carpeta de arriba.")
+            }
         }
+    }
+
+    /// Recordings in a folder or its subfolders.
+    private func recordings(in path: String) -> [Entry] {
+        model.entries.filter { $0.folder == path || $0.folder?.hasPrefix(path + "/") == true }
+    }
+
+    private func deleteFolder(_ path: String, recordings: Bool = false, keepCloud: Bool = false) {
+        if case let .folder(selected) = folder, selected == path || selected.hasPrefix(path + "/") { folder = .all }
+        model.deleteFolder(path, recordings: recordings, keepCloud: keepCloud)
     }
 
     private var grid: some View {

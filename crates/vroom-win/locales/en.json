@@ -59,7 +59,6 @@
   "Importar de Loom": "Import from Loom",
   "Importar todo": "Import all",
   "La grabación no se cerró bien: {e}": "The recording didn't close properly: {e}",
-  "Las grabaciones de «{path}» pasan a la carpeta de arriba.": "Recordings in “{path}” move to the folder above.",
   "Liberar espacio en este PC": "Free up space on this PC",
   "Los subtítulos se generan en este PC con Whisper: el audio no sale de aquí. Se ven en la página para compartir.": "Captions are made on this PC with Whisper: the audio never leaves it. They show on the share page.",
   "Micrófono": "Microphone",
@@ -140,5 +139,12 @@
   "¿Eliminar la grabación?": "Delete the recording?",
   "■ Detener": "■ Stop",
   "● Grabar": "● Record",
-  "＋ Nueva carpeta": "＋ New folder"
+  "＋ Nueva carpeta": "＋ New folder",
+  "La carpeta está vacía.": "The folder is empty.",
+  "«{path}» contiene {n} grabaciones.": "“{path}” has {n} recordings.",
+  "Si eliminas solo la carpeta, las grabaciones pasan a la carpeta de arriba.": "If you delete only the folder, its recordings move to the folder above.",
+  "Eliminar carpeta y grabaciones de este PC y de R2": "Delete folder and recordings from this PC and R2",
+  "Eliminar carpeta y grabaciones solo de este PC": "Delete folder and recordings from this PC only",
+  "Eliminar carpeta y grabaciones": "Delete folder and recordings",
+  "Eliminar solo la carpeta": "Delete folder only"
 }

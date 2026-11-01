@@ -346,6 +346,17 @@ impl Library {
         Ok(())
     }
 
+    /// Recordings in a folder or any of its subfolders.
+    pub fn ids_in_folder(&self, path: &str) -> Result<Vec<String>, String> {
+        let path = crate::meta::normalize_folder(path).ok_or_else(|| t("falta la carpeta"))?;
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|e| e.meta.folder.as_deref().is_some_and(|f| is_within(f, &path)))
+            .map(|e| e.meta.id)
+            .collect())
+    }
+
     /// Put a recording in a folder (`None` or empty: the top level).
     pub fn set_folder(&self, id: &str, folder: Option<&str>) -> Result<Entry, String> {
         let mut meta = self.meta(id)?;
@@ -610,6 +621,8 @@ mod tests {
         assert_eq!(lib.meta(&b).unwrap().folder.as_deref(), Some("Clientesviejos"), "only whole path components");
         assert!(lib.rename_folder("Cuentas", "Cuentas/Sub").is_err());
 
+        assert_eq!(lib.ids_in_folder("Cuentas").unwrap(), vec![a.clone()]);
+        assert!(lib.ids_in_folder("Cuentas/Acme/Otra").unwrap().is_empty());
         lib.delete_folder("Cuentas/Acme").unwrap();
         assert_eq!(lib.meta(&a).unwrap().folder.as_deref(), Some("Cuentas"));
         lib.delete_folder("Vacía").unwrap();

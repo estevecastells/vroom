@@ -948,6 +948,19 @@ impl VroomApp {
 
     fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.dialog.take() else { return };
+        // A folder's recordings (subfolders included), and whether any is in R2.
+        let (inside, inside_in_cloud) = match &dialog {
+            Dialog::DeleteFolder(path) => {
+                let within =
+                    |f: &String| f == path || f.strip_prefix(path.as_str()).is_some_and(|r| r.starts_with('/'));
+                let inside: Vec<&Entry> =
+                    self.entries.iter().filter(|e| e.meta.folder.as_ref().is_some_and(within)).collect();
+                let in_cloud =
+                    inside.iter().any(|e| matches!(e.status, Status::Synced | Status::Cloud | Status::Uploading));
+                (inside.len(), in_cloud)
+            }
+            _ => (0, false),
+        };
         let mut close = false;
         let mut run: Option<(Vec<String>, String)> = None;
         let modal = egui::Modal::new(egui::Id::unique("dialog")).show(ctx, |ui| {
@@ -1020,9 +1033,38 @@ impl VroomApp {
                 }
                 Dialog::DeleteFolder(path) => {
                     ui.heading(t("¿Eliminar la carpeta?"));
-                    ui.label(tr!("Las grabaciones de «{path}» pasan a la carpeta de arriba.", path));
-                    if ok_cancel(ui, &t("Eliminar carpeta"), &mut close) {
-                        run = Some((vec!["folder".into(), "delete".into(), "--".into(), path.clone()], String::new()));
+                    let delete = |flags: &[&str]| {
+                        let mut args: Vec<String> = vec!["folder".into(), "delete".into()];
+                        args.extend(flags.iter().map(|f| f.to_string()));
+                        args.extend(["--".into(), path.clone()]);
+                        Some((args, String::new()))
+                    };
+                    if inside == 0 {
+                        ui.label(t("La carpeta está vacía."));
+                        if ok_cancel(ui, &t("Eliminar carpeta"), &mut close) {
+                            run = delete(&[]);
+                        }
+                    } else {
+                        ui.label(tr!("«{path}» contiene {n} grabaciones.", path, n = inside));
+                        ui.label(t("Si eliminas solo la carpeta, las grabaciones pasan a la carpeta de arriba."));
+                        ui.vertical(|ui| {
+                            if inside_in_cloud {
+                                if ui.button(t("Eliminar carpeta y grabaciones de este PC y de R2")).clicked() {
+                                    run = delete(&["--recordings"]);
+                                }
+                                if ui.button(t("Eliminar carpeta y grabaciones solo de este PC")).clicked() {
+                                    run = delete(&["--recordings", "--keep-cloud"]);
+                                }
+                            } else if ui.button(t("Eliminar carpeta y grabaciones")).clicked() {
+                                run = delete(&["--recordings", "--keep-cloud"]);
+                            }
+                            if ui.button(t("Eliminar solo la carpeta")).clicked() {
+                                run = delete(&[]);
+                            }
+                            if ui.button(t("Cancelar")).clicked() {
+                                close = true;
+                            }
+                        });
                     }
                 }
             }

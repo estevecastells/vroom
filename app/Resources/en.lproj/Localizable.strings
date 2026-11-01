@@ -94,7 +94,14 @@
 "Eliminar carpeta…" = "Delete folder…";
 "Eliminar carpeta" = "Delete folder";
 "¿Eliminar la carpeta «%@»?" = "Delete the folder “%@”?";
-"Las grabaciones no se borran: pasan a la carpeta de arriba." = "The recordings aren't deleted: they move to the folder above.";
+"Eliminar carpeta y grabaciones de este Mac y de R2" = "Delete folder and recordings from this Mac and R2";
+"Eliminar carpeta y grabaciones solo de este Mac" = "Delete folder and recordings from this Mac only";
+"Eliminar carpeta y grabaciones" = "Delete folder and recordings";
+"Eliminar solo la carpeta" = "Delete folder only";
+"La carpeta está vacía." = "The folder is empty.";
+"Contiene 1 grabación." = "It has 1 recording.";
+"Contiene %lld grabaciones." = "It has %lld recordings.";
+"Si eliminas solo la carpeta, las grabaciones pasan a la carpeta de arriba." = "If you delete only the folder, its recordings move to the folder above.";
 "Nombre" = "Name";
 "Crear" = "Create";
 "Sin grabaciones" = "No recordings";

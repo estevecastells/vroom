@@ -30,8 +30,9 @@ fn usage() -> String {
   vroom rename <id> <título>
   vroom move <id> [carpeta/sub]     mueve a una carpeta (sin carpeta: al nivel superior)
   vroom folders                     lista las carpetas
-  vroom folder create <ruta> | rename <ruta> <nueva> | delete <ruta>
-                                    (al borrar, las grabaciones pasan a la carpeta de arriba)
+  vroom folder create <ruta> | rename <ruta> <nueva> | delete [--recordings [--keep-cloud]] <ruta>
+                                    (al borrar, las grabaciones pasan a la carpeta de arriba;
+                                    con --recordings se borran, también de R2 salvo --keep-cloud)
   vroom transcribe <id>... | --missing [--language es] [--model ruta.bin]
                                     subtítulos con Whisper en local (usa los modelos de MacWhisper)
   vroom free <id>                   borra el vídeo local de una grabación ya subida
@@ -182,7 +183,23 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
                     ctx.lib.rename_folder(&from, &rest(&args))?;
                 }
                 "delete" | "rm" => {
-                    ctx.lib.delete_folder(&rest(&args))?;
+                    let recordings = take_flag(&mut args, "--recordings");
+                    let keep_cloud = take_flag(&mut args, "--keep-cloud");
+                    let path = rest(&args);
+                    if recordings {
+                        let mut failed = 0;
+                        for id in ctx.lib.ids_in_folder(&path)? {
+                            if let Err(e) = delete_recording(&ctx, &id, keep_cloud) {
+                                out.warning(Some(&id), &e);
+                                failed += 1;
+                            }
+                        }
+                        // The folder stays, with what could not be deleted.
+                        if failed > 0 {
+                            return Err(tr!("no se pudieron borrar {failed} grabaciones", failed));
+                        }
+                    }
+                    ctx.lib.delete_folder(&path)?;
                 }
                 other => return Err(tr!("vroom folder: subcomando desconocido {other}", other)),
             }
@@ -206,14 +223,7 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         "delete" | "rm" => {
             let keep_cloud = take_flag(&mut args, "--keep-cloud");
             let id = positional(&mut args, "id")?;
-            if !ctx.lib.contains(&id) {
-                return Err(tr!("no existe la grabación {id}", id));
-            }
-            let in_cloud = ctx.lib.state(&id).uploaded_at.is_some() || ctx.lib.state(&id).multipart.is_some();
-            if !keep_cloud && in_cloud {
-                sync::delete_remote(&ctx.r2()?, &ctx.lib, &id)?;
-            }
-            ctx.lib.remove(&id)?;
+            delete_recording(&ctx, &id, keep_cloud)?;
             out.ok(tr!("{id} borrada", id));
             Ok(())
         }
@@ -453,6 +463,18 @@ fn now_local() -> OffsetDateTime {
 }
 
 /// Flags are only looked for before `--`, so a title like "-h" can follow it.
+/// Deletes a recording here and, unless `keep_cloud`, from R2 first.
+fn delete_recording(ctx: &Ctx, id: &str, keep_cloud: bool) -> Result<(), String> {
+    if !ctx.lib.contains(id) {
+        return Err(tr!("no existe la grabación {id}", id));
+    }
+    let state = ctx.lib.state(id);
+    if !keep_cloud && (state.uploaded_at.is_some() || state.multipart.is_some()) {
+        sync::delete_remote(&ctx.r2()?, &ctx.lib, id)?;
+    }
+    ctx.lib.remove(id)
+}
+
 pub(crate) fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
     let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
     match args[..end].iter().position(|a| a == flag) {
