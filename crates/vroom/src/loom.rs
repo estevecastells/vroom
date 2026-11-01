@@ -10,9 +10,14 @@ use crate::out::Out;
 use crate::{take_flag, take_opt, Ctx};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use time::OffsetDateTime;
+use ureq::config::Config;
+use ureq::http::Uri;
+use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 use vroom_cloud::sync;
 use vroom_core::layout::{CAPTIONS, THUMB, VIDEO};
 use vroom_core::library::mark_in_progress;
@@ -244,7 +249,7 @@ impl Loom {
         // A whole Cookie header (name=value; …) as copied from the browser, or just
         // the value of connect.sid.
         let cookie = if cookie.contains('=') { cookie_pairs(cookie) } else { format!("connect.sid={cookie}") };
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+        let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(20)))
             .timeout_recv_response(Some(Duration::from_secs(120)))
@@ -254,8 +259,8 @@ impl Loom {
             .https_only(true)
             .max_redirects(0)
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")
-            .build()
-            .into();
+            .build();
+        let agent = ureq::Agent::with_parts(config, DefaultConnector::default(), PublicOnly::default());
         Ok(Loom { agent, cookie })
     }
 
@@ -565,8 +570,8 @@ fn cookie_pairs(raw: &str) -> String {
         .join("; ")
 }
 
-/// Media URLs come from Loom's responses: only public https hosts, never this
-/// machine or the local network, by name or by what the name resolves to.
+/// Media URLs come from Loom's responses: only https hosts with a public-looking
+/// name. Where the name points is checked by `PublicOnly` when connecting.
 fn check_media_url(url: &str) -> Result<(), String> {
     let u = url::Url::parse(url).map_err(|_| "URL de Loom no válida".to_string())?;
     let rejected = || format!("URL de descarga rechazada: {}", u.host_str().unwrap_or("?"));
@@ -576,33 +581,55 @@ fn check_media_url(url: &str) -> Result<(), String> {
     if u.scheme() != "https" || !host.contains('.') || local.iter().any(|s| host.ends_with(s)) {
         return Err(rejected());
     }
-    let addrs = std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)).map_err(|e| format!("{host}: {e}"))?;
-    if addrs.into_iter().all(|a| is_public(a.ip())) {
-        Ok(())
-    } else {
-        Err(rejected())
+    Ok(())
+}
+
+/// Resolves like ureq does, then refuses hosts that point at this machine or a
+/// private network. Checking here, rather than before the request, means the
+/// addresses checked are the ones connected to.
+#[derive(Debug, Default)]
+struct PublicOnly(DefaultResolver);
+
+impl Resolver for PublicOnly {
+    fn resolve(&self, uri: &Uri, config: &Config, timeout: NextTimeout) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let addrs = self.0.resolve(uri, config, timeout)?;
+        if addrs.iter().all(|a| is_public(a.ip())) {
+            Ok(addrs)
+        } else {
+            Err(ureq::Error::BadUri(format!("{} apunta a una red local", uri.host().unwrap_or("?"))))
+        }
     }
 }
 
-fn is_public(ip: std::net::IpAddr) -> bool {
+/// Global unicast only.
+fn is_public(ip: IpAddr) -> bool {
     match ip {
-        std::net::IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            !(v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || a == 0
-                || (a == 100 && (64..128).contains(&b)))
+        IpAddr::V4(v4) => {
+            let [a, b, c, _] = v4.octets();
+            !(a == 0
+                || a == 10
+                || a == 127
+                || a >= 224
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 169 && b == 254)
+                || (a == 172 && (16..32).contains(&b))
+                || (a == 192 && b == 168)
+                || (a == 192 && b == 0 && (c == 0 || c == 2))
+                || (a == 198 && (b == 18 || b == 19))
+                || (a == 198 && b == 51 && c == 100)
+                || (a == 203 && b == 0 && c == 113))
         }
-        std::net::IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            match v6.to_ipv4_mapped() {
-                Some(v4) => is_public(v4.into()),
-                None => {
-                    !(v6.is_loopback() || v6.is_unspecified() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80)
-                }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(v4.into());
+            }
+            let s = v6.segments();
+            match s[0] {
+                // 6to4 carries an IPv4 address.
+                0x2002 => is_public(Ipv4Addr::new((s[1] >> 8) as u8, s[1] as u8, (s[2] >> 8) as u8, s[2] as u8).into()),
+                // Teredo and documentation.
+                0x2001 if s[1] == 0 || s[1] == 0x0db8 => false,
+                first => first & 0xe000 == 0x2000,
             }
         }
     }
@@ -732,6 +759,13 @@ mod tests {
         assert!(check_media_url("https://localhost./x").is_err());
         assert!(check_media_url("https://printer.LOCAL./x").is_err());
         assert!(!is_public("10.0.0.1".parse().unwrap()));
+        assert!(!is_public("::127.0.0.1".parse().unwrap()));
+        assert!(!is_public("64:ff9b::7f00:1".parse().unwrap()));
+        assert!(!is_public("2002:7f00:1::".parse().unwrap()));
+        assert!(!is_public("fec0::1".parse().unwrap()));
+        assert!(!is_public("ff02::1".parse().unwrap()));
+        assert!(!is_public("198.18.0.1".parse().unwrap()));
+        assert!(is_public("2606:4700::1111".parse().unwrap()));
         assert!(!is_public("169.254.169.254".parse().unwrap()));
         assert!(!is_public("::ffff:127.0.0.1".parse().unwrap()));
         assert!(!is_public("fd00::1".parse().unwrap()));
