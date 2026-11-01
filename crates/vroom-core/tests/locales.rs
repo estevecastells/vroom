@@ -93,7 +93,8 @@ fn english_catalog_matches_the_code() {
             if file.ends_with("i18n.rs") {
                 continue;
             }
-            used.extend(sources(&std::fs::read_to_string(&file).unwrap()));
+            // rustc reads CRLF as LF inside literals; Windows checkouts have CRLF.
+            used.extend(sources(&std::fs::read_to_string(&file).unwrap().replace("\r\n", "\n")));
         }
     }
     let missing: Vec<&String> = used.iter().filter(|s| !en.contains_key(*s)).collect();

@@ -105,7 +105,8 @@ mod tests {
         for file in std::fs::read_dir(dir).unwrap() {
             let path = file.unwrap().path();
             if path.extension().is_some_and(|e| e == "rs") {
-                let code = std::fs::read_to_string(&path).unwrap();
+                // rustc reads CRLF as LF inside literals; Windows checkouts have CRLF.
+                let code = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
                 // Split so that this file's own text does not match.
                 literals_after(&code, concat!("tr", "!("), &mut found);
                 literals_after(&code, concat!("t", "("), &mut found);
