@@ -9,7 +9,7 @@ A small, free replacement for the basic Loom workflow: press ⌥⇧R, talk, stop
 
 <a href="https://github.com/estevecastells/vroom/releases/latest/download/Vroom-macos-arm64.zip"><img src="https://img.shields.io/badge/Download_for_Mac-Apple_Silicon-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download Vroom for Mac (Apple Silicon)" height="44"/></a>
 &nbsp;
-<a href="https://github.com/estevecastells/vroom/releases/latest/download/vroom-windows-x64.zip"><img src="https://img.shields.io/badge/Windows-CLI_(no_recorder_yet)-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download the vroom CLI for Windows" height="44"/></a>
+<a href="https://github.com/estevecastells/vroom/releases/latest/download/vroom-windows-x64.zip"><img src="https://img.shields.io/badge/Windows-preview-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Vroom for Windows (preview)" height="44"/></a>
 
 <p>
 <a href="https://github.com/estevecastells/vroom/releases/latest"><img src="https://img.shields.io/github/v/release/estevecastells/vroom?label=latest&style=flat-square" alt="Latest release"/></a>
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/estevecastells/vroom/main/scripts/g
 
 <div align="center"><sub>
 The app is not notarized. If you download the zip instead, macOS may refuse to open it the first time: go to System Settings › Privacy &amp; Security and press <b>Open Anyway</b>.
-The Windows download is the <code>vroom</code> command-line tool (library, R2 uploads, links, restore, Loom import). There is no Windows recorder yet.
+The Windows app is new and still being tested on real PCs: see <a href="crates/vroom-win/README.md">what works so far</a>. Until the next release, the Windows download has only the <code>vroom</code> command-line tool.
 </sub></div>
 
 ## Vroom vs. Loom
@@ -81,9 +81,10 @@ The UI is in Spanish.
 | `crates/vroom-core` | The library on disk, the config file, the bucket layout, the share page and the CLI's JSON protocol. Cross-platform. |
 | `crates/vroom-cloud` | R2 through its S3 API (`rusty-s3` + `ureq`, no async runtime): resumable multipart uploads, restore, download, delete and links. |
 | `crates/vroom` | The `vroom` CLI. The apps use it for everything except capture, and it works on its own on macOS, Windows and Linux. |
+| `crates/vroom-win` | The Windows app (preview): tray, recording, library and settings. |
 | `app/` | The macOS menu bar app (SwiftUI): recording with ScreenCaptureKit + AVAssetWriter, camera bubble, control bar, library and settings. |
 
-The Mac app runs `vroom --json …` and reads one event per line (`fixtures/` holds samples that both the Rust tests and `KitChecks` decode). A Windows app would reuse the same CLI and only needs its own capture (Windows.Graphics.Capture + Media Foundation) and UI. Today the CLI is tested on Windows in CI; there is no Windows recorder yet.
+The Mac app runs `vroom --json …` and reads one event per line (`fixtures/` holds samples that both the Rust tests and `KitChecks` decode). The Windows app in `crates/vroom-win` does the same: it records with Windows.Graphics.Capture and Media Foundation, and runs `vroom.exe` for everything else.
 
 ## Build
 
