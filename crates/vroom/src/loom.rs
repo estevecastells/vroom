@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use time::OffsetDateTime;
 use ureq::config::Config;
@@ -26,6 +28,11 @@ use vroom_core::{Meta, Source};
 const GRAPHQL: &str = "https://www.loom.com/graphql";
 /// Loom documents no rate limit; the archivers pause like this between calls.
 const PAUSE: Duration = Duration::from_millis(400);
+/// Videos imported side by side.
+const WORKERS: usize = 3;
+/// HLS segments fetched side by side: they are small, so one at a time is
+/// mostly waiting on round trips.
+const SEGMENTS_AT_ONCE: usize = 8;
 const PAGE: u32 = 50;
 /// Bounds on what a (possibly compromised) Loom response can make us fetch.
 const MAX_SEGMENTS: usize = 50_000;
@@ -136,7 +143,9 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
     if free_local && r2.is_none() {
         return Err("--free-local necesita subir a R2".into());
     }
-    let (mut imported, mut skipped, mut failed) = (0, 0, Vec::new());
+    // An import stopped halfway left folders without a video: drop them, so
+    // those videos are imported again rather than counted as done.
+    ctx.lib.recover()?;
     // Already imported, by Loom id. Imports get random ids like any recording:
     // Loom ids are in old share links, and the bucket may be public.
     let mut known: std::collections::HashMap<String, String> = ctx
@@ -146,41 +155,65 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
         .filter(|e| e.meta.source == Source::Loom)
         .filter_map(|e| Some((e.meta.source_id?, e.meta.id)))
         .collect();
-    for v in videos.iter().take(limit) {
-        let fresh = !known.contains_key(&v.id);
-        let id = known.entry(v.id.clone()).or_insert_with(vroom_core::id::generate).clone();
-        if fresh {
-            if let Err(e) = import_one(out, ctx, &loom, v, &id) {
-                out.warning(Some(&id), &format!("{}: {e}", v.name));
-                failed.push(v.name.clone());
-                let _ = ctx.lib.remove(&id);
-                continue;
-            }
-            imported += 1;
-            out.done(&id, "imported");
-        } else {
-            skipped += 1;
-            // Imported before folders existed, or moved in Loom since.
-            if v.folder.is_some() && ctx.lib.meta(&id).ok().and_then(|m| m.folder).is_none() {
-                ctx.lib.set_folder(&id, v.folder.as_deref())?;
-            }
-        }
-        if let Some(r2) = &r2 {
-            let state = ctx.lib.state(&id);
-            if state.uploaded_at.is_none() || state.meta_dirty {
-                match sync::upload(r2, &ctx.lib, &id, |d, t| out.progress(&id, d, t)) {
-                    Ok(()) => out.done(&id, "uploaded"),
-                    Err(e) => {
-                        out.warning(Some(&id), &format!("subida: {e}"));
-                        continue;
+    let jobs: Vec<(&Video, String, bool)> = videos
+        .iter()
+        .take(limit)
+        .map(|v| {
+            let fresh = !known.contains_key(&v.id);
+            let id = known.entry(v.id.clone()).or_insert_with(vroom_core::id::generate).clone();
+            (v, id, fresh)
+        })
+        .collect();
+    // A few videos at a time: each one waits on Loom's API, its CDN and R2 in
+    // turn, so running them side by side keeps the line busy.
+    let next = AtomicUsize::new(0);
+    let (imported, skipped) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let failed = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..WORKERS.min(jobs.len()) {
+            s.spawn(|| {
+                while let Some((v, id, fresh)) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if *fresh {
+                        if let Err(e) = import_one(out, ctx, &loom, v, id) {
+                            out.warning(Some(id), &format!("{}: {e}", v.name));
+                            failed.lock().unwrap_or_else(|e| e.into_inner()).push(v.name.clone());
+                            let _ = ctx.lib.remove(id);
+                            continue;
+                        }
+                        imported.fetch_add(1, Ordering::Relaxed);
+                        out.done(id, "imported");
+                    } else {
+                        skipped.fetch_add(1, Ordering::Relaxed);
+                        // Imported before folders existed, or moved in Loom since.
+                        if v.folder.is_some() && ctx.lib.meta(id).ok().and_then(|m| m.folder).is_none() {
+                            if let Err(e) = ctx.lib.set_folder(id, v.folder.as_deref()) {
+                                out.warning(Some(id), &e);
+                            }
+                        }
+                    }
+                    if let Some(r2) = &r2 {
+                        let state = ctx.lib.state(id);
+                        if state.uploaded_at.is_none() || state.meta_dirty {
+                            match sync::upload(r2, &ctx.lib, id, |d, t| out.progress(id, d, t)) {
+                                Ok(()) => out.done(id, "uploaded"),
+                                Err(e) => {
+                                    out.warning(Some(id), &format!("subida: {e}"));
+                                    continue;
+                                }
+                            }
+                        }
+                        if free_local {
+                            if let Err(e) = ctx.lib.remove_local_video(id) {
+                                out.warning(Some(id), &e);
+                            }
+                        }
                     }
                 }
-            }
-            if free_local {
-                ctx.lib.remove_local_video(&id)?;
-            }
+            });
         }
-    }
+    });
+    let (imported, skipped) = (imported.into_inner(), skipped.into_inner());
+    let failed = failed.into_inner().unwrap_or_else(|e| e.into_inner());
     out.ok(format!("Loom: {imported} importados, {skipped} ya estaban, {} fallaron", failed.len()));
     if !failed.is_empty() {
         return Err(format!(
@@ -448,6 +481,22 @@ impl Loom {
         Err("demasiadas redirecciones".into())
     }
 
+    /// One HLS segment, retried: with hundreds per video, a dropped connection
+    /// should not cost the whole download.
+    fn get_segment(&self, url: &str) -> Result<Vec<u8>, String> {
+        let mut attempt = 0;
+        loop {
+            match self.get_bytes(url) {
+                Ok(b) => return Ok(b),
+                Err(e) if attempt >= 3 => return Err(e),
+                Err(_) => {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(500 * 2u64.pow(attempt)));
+                }
+            }
+        }
+    }
+
     /// CDN URLs are signed; no cookie goes to them.
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
         let resp = self.get_media(url)?;
@@ -547,13 +596,20 @@ impl Loom {
         }
         let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
         let mut total = 0u64;
-        for uri in uris {
-            let bytes = self.get_bytes(&sign(playlist_url, &uri))?;
-            total += bytes.len() as u64;
-            if total > MAX_VIDEO_BYTES {
-                return Err("el vídeo supera el tamaño máximo esperado".into());
+        for batch in uris.chunks(SEGMENTS_AT_ONCE) {
+            let fetched: Vec<Result<Vec<u8>, String>> = std::thread::scope(|s| {
+                let handles: Vec<_> =
+                    batch.iter().map(|uri| s.spawn(|| self.get_segment(&sign(playlist_url, uri)))).collect();
+                handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("descarga interrumpida".into()))).collect()
+            });
+            for bytes in fetched {
+                let bytes = bytes?;
+                total += bytes.len() as u64;
+                if total > MAX_VIDEO_BYTES {
+                    return Err("el vídeo supera el tamaño máximo esperado".into());
+                }
+                file.write_all(&bytes).map_err(|e| e.to_string())?;
             }
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
         }
         file.sync_all().map_err(|e| e.to_string())?;
         Ok(text.contains("#EXT-X-MAP"))

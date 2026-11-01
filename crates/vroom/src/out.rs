@@ -9,12 +9,12 @@ use vroom_core::share::format_duration;
 pub struct Out {
     json: bool,
     /// Progress lines are throttled so a fast upload does not flood the app.
-    last_progress: std::cell::Cell<Option<Instant>>,
+    last_progress: std::sync::Mutex<Option<Instant>>,
 }
 
 impl Out {
     pub fn new(json: bool) -> Out {
-        Out { json, last_progress: std::cell::Cell::new(None) }
+        Out { json, last_progress: std::sync::Mutex::new(None) }
     }
 
     pub fn event(&self, event: &Event, text: impl FnOnce() -> String) {
@@ -64,10 +64,13 @@ impl Out {
     pub fn progress(&self, id: &str, done: u64, total: u64) {
         let now = Instant::now();
         let finished = total > 0 && done >= total;
-        if !finished && self.last_progress.get().is_some_and(|t| now - t < Duration::from_millis(250)) {
-            return;
+        {
+            let mut last = self.last_progress.lock().unwrap_or_else(|e| e.into_inner());
+            if !finished && last.is_some_and(|t| now - t < Duration::from_millis(250)) {
+                return;
+            }
+            *last = Some(now);
         }
-        self.last_progress.set(Some(now));
         if self.json {
             self.event(&Event::Progress { id: id.into(), done, total }, String::new);
         } else {
