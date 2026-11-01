@@ -29,6 +29,9 @@ pub enum Event {
         path: String,
         library: String,
         has_secret: bool,
+        /// An Anthropic API key is stored: transcribed recordings get a title from Claude.
+        #[serde(default)]
+        has_anthropic_key: bool,
     },
     /// What `transcribe` would use; absent when it is missing.
     Transcriber {

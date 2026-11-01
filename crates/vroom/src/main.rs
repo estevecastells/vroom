@@ -4,6 +4,7 @@
 mod loom;
 mod out;
 mod secret;
+mod titles;
 mod transcribe;
 
 use out::Out;
@@ -35,6 +36,8 @@ fn usage() -> String {
                                     con --recordings se borran, también de R2 salvo --keep-cloud)
   vroom transcribe <id>... | --missing [--language es] [--model ruta.bin]
                                     subtítulos con Whisper en local (usa los modelos de MacWhisper)
+  vroom title <id>... | --missing [--force]
+                                    título automático con Claude a partir de los subtítulos
   vroom free <id>                   borra el vídeo local de una grabación ya subida
   vroom delete <id> [--keep-cloud]  borra la grabación (también de R2, salvo --keep-cloud)
 
@@ -42,6 +45,7 @@ fn usage() -> String {
   vroom config r2 --account-id <id> --bucket <b> --access-key-id <k> [--public-url <u>]
                   [--prefix <p>] [--jurisdiction eu]   (el secret se lee de stdin)
   vroom config set <clave> <valor>  library, auto_upload, keep_local_days
+  vroom config anthropic [--clear]  clave de Anthropic para los títulos automáticos (por stdin)
   vroom check                       prueba la conexión con R2
 
   vroom loom import [--no-upload] [--free-local] [--limit N]
@@ -297,6 +301,7 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         "config" => config(out, &mut ctx, args),
         "loom" => loom::run(out, &ctx, args),
         "transcribe" => transcribe::run(out, &ctx, args),
+        "title" => titles::run(out, &ctx, args),
         other => Err(format!("{}\n\n{}", tr!("comando desconocido: {other}", other), usage())),
     }
 }
@@ -360,6 +365,18 @@ fn config(out: &Out, ctx: &mut Ctx, mut args: Vec<String>) -> Result<(), String>
             ctx.config.r2 = Some(cfg);
             ctx.config.save(&ctx.config_path)?;
         }
+        Some("anthropic") => {
+            if take_flag(&mut args, "--clear") {
+                secret::delete_anthropic_key();
+            } else {
+                let key = read_stdin_line()?;
+                if key.is_empty() {
+                    return Err(t("falta la clave de Anthropic (por stdin)"));
+                }
+                titles::check_key(&key)?;
+                secret::set_anthropic_key(&key)?;
+            }
+        }
         Some("disconnect") => {
             if let Some(old) = ctx.config.r2.take() {
                 secret::delete(&old.access_key_id);
@@ -388,6 +405,7 @@ fn config(out: &Out, ctx: &mut Ctx, mut args: Vec<String>) -> Result<(), String>
         path: ctx.config_path.display().to_string(),
         library: ctx.config.library_dir().display().to_string(),
         has_secret,
+        has_anthropic_key: secret::anthropic_key().ok().flatten().is_some(),
     };
     out.event(&event, || {
         // Labels padded so the values line up, whatever their language.

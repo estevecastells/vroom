@@ -62,7 +62,15 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
                 out.percent(id, pct)
             });
         match result {
-            Ok(()) => out.done(id, "transcribed"),
+            Ok(()) => {
+                out.done(id, "transcribed");
+                match crate::titles::after_transcribe(ctx, id) {
+                    Ok(Some(entry)) => out.entry(&entry),
+                    Ok(None) => {}
+                    // The captions are there; only the title is missing.
+                    Err(message) => out.warning(Some(id), &tr!("título automático: {message}", message)),
+                }
+            }
             Err(message) => {
                 failed += 1;
                 out.warning(Some(id), &message);

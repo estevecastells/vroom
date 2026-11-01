@@ -143,6 +143,10 @@ vroom transcribe <id>                 # or --missing for every recording without
 
 With MacWhisper installed, its models are used without downloading anything. In the app: **Settings › Transcription**, and right-click › **Transcribe** in the library. A new transcription of a recording that is already in R2 goes up on the next sync.
 
+### Automatic titles
+
+Optional. With an [Anthropic API key](https://console.anthropic.com/settings/keys) in **Settings › Transcription** (or `vroom config anthropic`, which reads it from stdin), Claude titles each recording after it is transcribed, as long as it still has its default "Recording …" title. Only the caption text goes to Anthropic, never the video. The key stays in the Keychain. `vroom title --missing` titles the ones already transcribed; `vroom title <id> --force` replaces a title you set.
+
 ## CLI
 
 ```text

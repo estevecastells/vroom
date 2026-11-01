@@ -157,6 +157,9 @@ private struct CloudSettings: View {
 @MainActor
 private struct TranscriptionSettings: View {
     @Bindable var model: AppModel
+    @State private var anthropicKey = ""
+    @State private var keyError: String?
+    @State private var savingKey = false
 
     var body: some View {
         Form {
@@ -185,6 +188,24 @@ private struct TranscriptionSettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Títulos automáticos") {
+                if model.config?.hasAnthropicKey == true {
+                    LabeledContent("Clave de Anthropic") {
+                        HStack {
+                            Text("guardada en el llavero").foregroundStyle(.secondary)
+                            Button("Quitar") { saveKey("") }.disabled(savingKey)
+                        }
+                    }
+                } else {
+                    HStack {
+                        SecureField("Clave de Anthropic", text: $anthropicKey, prompt: Text(verbatim: "sk-ant-…"))
+                        Button("Guardar") { saveKey(anthropicKey) }.disabled(anthropicKey.isEmpty || savingKey)
+                    }
+                }
+                if let keyError { Text(keyError).font(.caption).foregroundStyle(.red) }
+                Text("Con una clave de la API de Anthropic, Claude pone título a cada grabación transcrita que aún tenga el título por defecto. Se envía solo el texto de los subtítulos, nunca el vídeo.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 if let w = model.whisperPath {
                     LabeledContent("Programa") { Text(w).foregroundStyle(.secondary) }
@@ -199,6 +220,15 @@ private struct TranscriptionSettings: View {
         }
         .formStyle(.grouped)
         .task { await model.reloadTranscriber() }
+    }
+
+    private func saveKey(_ key: String) {
+        savingKey = true
+        Task {
+            keyError = await model.setAnthropicKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
+            if keyError == nil { anthropicKey = "" }
+            savingKey = false
+        }
     }
 }
 

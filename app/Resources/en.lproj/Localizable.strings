@@ -226,3 +226,8 @@
 "No se encuentra el programa vroom dentro de la app." = "The vroom program can't be found inside the app.";
 "Respuesta inesperada de vroom: %@" = "Unexpected response from vroom: %@";
 "vroom terminó con código %lld" = "vroom exited with code %lld";
+"Títulos automáticos" = "Automatic titles";
+"Clave de Anthropic" = "Anthropic key";
+"guardada en el llavero" = "saved in the keychain";
+"Quitar" = "Remove";
+"Con una clave de la API de Anthropic, Claude pone título a cada grabación transcrita que aún tenga el título por defecto. Se envía solo el texto de los subtítulos, nunca el vídeo." = "With an Anthropic API key, Claude titles each transcribed recording that still has its default title. Only the caption text is sent, never the video.";

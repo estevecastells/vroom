@@ -70,6 +70,8 @@ public struct ConfigInfo: Equatable, Sendable {
     public var path: String
     public var library: String
     public var hasSecret: Bool
+    /// Transcribed recordings get a title from Claude.
+    public var hasAnthropicKey = false
 
     public var cloudReady: Bool { config.r2 != nil && hasSecret }
 }
@@ -90,7 +92,7 @@ public enum Event: Decodable, Equatable, Sendable {
     case error(String, code: String?)
 
     private enum Keys: String, CodingKey {
-        case type, version, `protocol`, entries, entry, folders, config, path, library, hasSecret, id, done, total, what, url,
+        case type, version, `protocol`, entries, entry, folders, config, path, library, hasSecret, hasAnthropicKey, id, done, total, what, url,
             expiresAt, message, code, model, whisper
     }
 
@@ -110,7 +112,8 @@ public enum Event: Decodable, Equatable, Sendable {
                 config: try c.decode(Config.self, forKey: .config),
                 path: try c.decode(String.self, forKey: .path),
                 library: try c.decode(String.self, forKey: .library),
-                hasSecret: try c.decode(Bool.self, forKey: .hasSecret)))
+                hasSecret: try c.decode(Bool.self, forKey: .hasSecret),
+                hasAnthropicKey: try c.decodeIfPresent(Bool.self, forKey: .hasAnthropicKey) ?? false))
         case "progress":
             self = .progress(
                 id: try c.decode(String.self, forKey: .id),

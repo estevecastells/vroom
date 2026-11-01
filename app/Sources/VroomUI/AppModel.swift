@@ -694,6 +694,17 @@ public final class AppModel {
         }
     }
 
+    /// Save (the CLI checks it first) or, with an empty key, remove the Anthropic key.
+    func setAnthropicKey(_ key: String) async -> String? {
+        guard let cli else { return CLIError.missingBinary.localizedDescription }
+        do {
+            config = try await key.isEmpty ? cli.config(["anthropic", "--clear"]) : cli.config(["anthropic"], stdin: key)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     func disconnect() async {
         guard let cli else { return }
         config = try? await cli.config(["disconnect"])

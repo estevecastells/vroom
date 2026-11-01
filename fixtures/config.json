@@ -13,5 +13,6 @@
   },
   "path": "/Users/me/Library/Application Support/Vroom/config.toml",
   "library": "/Users/me/Movies/Vroom",
-  "has_secret": true
+  "has_secret": true,
+  "has_anthropic_key": false
 }
