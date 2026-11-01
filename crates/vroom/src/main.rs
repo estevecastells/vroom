@@ -417,14 +417,16 @@ pub(crate) fn read_stdin_line() -> Result<String, String> {
     Ok(s.trim().to_string())
 }
 
-/// A program from `$env`, the PATH, or Homebrew (apps launched from Finder get a minimal PATH).
+/// A program from `$env`, next to vroom itself (how the Windows zip ships whisper
+/// and ffmpeg), the PATH, or Homebrew (apps launched from Finder get a minimal PATH).
 pub(crate) fn find_tool(name: &str, env: &str) -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(env).map(PathBuf::from).filter(|p| p.is_file()) {
         return Some(p);
     }
     let name = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let mut dirs: Vec<PathBuf> =
-        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+        std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)).into_iter().collect();
+    dirs.extend(std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
     dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
     dirs.into_iter().map(|d| d.join(&name)).find(|p| p.is_file())
 }
