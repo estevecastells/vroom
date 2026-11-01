@@ -140,6 +140,10 @@ vroom loom list | loom import [--no-upload] [--free-local] [--limit N]
 
 `--json` prints one JSON event per line. `VROOM_CONFIG` points to another config file, and `VROOM_R2_SECRET` overrides the Keychain.
 
+## Contributing
+
+Pull requests are welcome. The test suite has to pass locally before you push (`make ci`); see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT

@@ -1,0 +1,22 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: { required: true }
+  - type: input
+    id: system
+    attributes:
+      label: Computer, OS version and Vroom version
+      description: "On a Mac: `sysctl -n hw.model`, `sw_vers -productVersion`. Vroom: `vroom version`"
+      placeholder: Mac17,9 / macOS 26.6 / 0.1.1
+    validations: { required: true }
+  - type: textarea
+    id: log
+    attributes:
+      label: Output or log lines
+      description: "From the command that failed, or on a Mac: `log show --last 10m --predicate 'subsystem == \"io.github.estevecastells.vroom\"'`. Remove account ids, bucket URLs and links before pasting."
+      render: text
