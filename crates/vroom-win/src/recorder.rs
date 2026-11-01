@@ -6,7 +6,7 @@
 //! WM_QUIT to it. The encoder sits in a mutex shared with the audio thread.
 
 use crate::audio::{self, Audio};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -248,7 +248,7 @@ struct Flags {
 }
 
 impl Flags {
-    fn new(shared: &Arc<Shared>, w: u32, h: u32, fps: u32, audio: bool, video: &PathBuf, thumb: &PathBuf) -> Flags {
+    fn new(shared: &Arc<Shared>, w: u32, h: u32, fps: u32, audio: bool, video: &Path, thumb: &Path) -> Flags {
         // H.264 wants even sizes; the encoder pads or crops frames to this.
         Flags {
             shared: shared.clone(),
@@ -256,8 +256,8 @@ impl Flags {
             height: h & !1,
             fps: fps.clamp(1, 60),
             audio,
-            video: video.clone(),
-            thumb: thumb.clone(),
+            video: video.to_path_buf(),
+            thumb: thumb.to_path_buf(),
         }
     }
 }
@@ -337,7 +337,7 @@ fn save_thumbnail(frame: &mut Frame, path: PathBuf) {
     let bgra = buffer.as_nopadding_buffer(&mut bytes).to_vec();
     std::thread::spawn(move || {
         let mut rgba = bgra;
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
         let Some(img) = image::RgbaImage::from_raw(w, h, rgba) else { return };

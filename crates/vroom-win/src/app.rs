@@ -55,7 +55,7 @@ impl Mailbox {
 enum Phase {
     Idle,
     Starting,
-    Recording { entry: Entry, recorder: Recorder },
+    Recording { entry: Box<Entry>, recorder: Box<Recorder> },
     Stopping,
 }
 
@@ -295,7 +295,7 @@ impl VroomApp {
         let Phase::Recording { entry, recorder } = std::mem::replace(&mut self.phase, Phase::Stopping) else { return };
         self.spawn(move |cli, mail| {
             let id = entry.meta.id.clone();
-            let result = recorder.stop();
+            let result = (*recorder).stop();
             if discard {
                 let _ = cli.run(&["delete", &id, "--keep-cloud"]);
                 mail.send(Msg::Toast("Grabación descartada".into()));
@@ -460,7 +460,7 @@ impl VroomApp {
             }
             Msg::Started(started) => {
                 let (entry, recorder) = *started;
-                self.phase = Phase::Recording { entry, recorder };
+                self.phase = Phase::Recording { entry: Box::new(entry), recorder: Box::new(recorder) };
                 if let Some(t) = &self.tray {
                     t.set_recording(true);
                 }

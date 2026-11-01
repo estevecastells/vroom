@@ -21,6 +21,9 @@ pub fn microphones() -> Vec<String> {
     cpal::default_host().input_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default()
 }
 
+/// A device's samples, already 48 kHz stereo, and the stream that fills them.
+type Source = (Arc<Mutex<VecDeque<f32>>>, Stream);
+
 pub struct Audio {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -42,7 +45,7 @@ impl Audio {
             .name("vroom-audio".into())
             .spawn(move || {
                 let host = cpal::default_host();
-                let mut sources: Vec<(Arc<Mutex<VecDeque<f32>>>, Stream)> = vec![];
+                let mut sources: Vec<Source> = vec![];
                 let mic = match microphone.as_deref() {
                     Some("") => None,
                     None => host.default_input_device(),
@@ -92,7 +95,7 @@ impl Audio {
     }
 }
 
-fn mix(sources: &[(Arc<Mutex<VecDeque<f32>>>, Stream)], stop: &AtomicBool, sink: &mut impl FnMut(&[u8])) {
+fn mix(sources: &[Source], stop: &AtomicBool, sink: &mut impl FnMut(&[u8])) {
     let clock_start = Instant::now();
     let mut emitted: u64 = 0;
     let mut out = Vec::new();
@@ -123,7 +126,7 @@ fn mix(sources: &[(Arc<Mutex<VecDeque<f32>>>, Stream)], stop: &AtomicBool, sink:
 }
 
 /// Opens one device and returns the queue its callback fills with 48 kHz stereo.
-fn open(device: &cpal::Device, loopback: bool) -> Result<(Arc<Mutex<VecDeque<f32>>>, Stream), String> {
+fn open(device: &cpal::Device, loopback: bool) -> Result<Source, String> {
     let supported = if loopback { device.default_output_config() } else { device.default_input_config() }
         .map_err(|e| e.to_string())?;
     let format = supported.sample_format();
