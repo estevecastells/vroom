@@ -43,10 +43,33 @@ why.
   timers that wake the CPU, or work on the main thread that can be avoided.
   If a change affects idle CPU, memory or recording CPU, say how you measured.
 - **No new dependencies without a reason** in the pull request description.
-- **Spanish UI, English code.** User-facing text is in Spanish; code,
-  comments, commits and docs are in English.
+- **Translated UI, English code.** User-facing text is written in Spanish in
+  the code and translated (see below); code, comments, commits and docs are
+  in English.
 - **No secrets.** Never commit account ids, bucket URLs, access keys, Loom
   cookies or recordings, not even in tests or screenshots. Use placeholders.
+
+## Translations
+
+Vroom ships in English and Spanish and picks the first of your system's
+languages it has, falling back to English. New languages are welcome: a
+translation is a few text files, no code.
+
+The Spanish text in the code is the source; each translation maps it to
+another language. Copy the English files, keep the keys (left side) as they
+are, and translate the values:
+
+| Part | Copy | To |
+|---|---|---|
+| Mac app | `app/Resources/en.lproj/Localizable.strings` | `app/Resources/<code>.lproj/Localizable.strings` |
+| CLI, share page, default titles | `crates/vroom-core/locales/en.json` | `crates/vroom-core/locales/<code>.json`, and add it to `BUILT_IN` in `crates/vroom-core/src/i18n.rs` |
+| Windows app | `crates/vroom-win/locales/en.json` | `crates/vroom-win/locales/<code>.json`, and add it to the crate's `BUILT_IN` list |
+
+`<code>` is the two-letter language code (`ca`, `fr`, `pt`, …). Keep
+placeholders exactly as they are: `{id}` and `{n}` in the JSON files, `%@`
+and `%lld` in the `.strings` file. The tests check that every string has an
+entry and that placeholders match. A partial translation is fine: missing
+strings show in Spanish until someone fills them in.
 
 ## Layout
 

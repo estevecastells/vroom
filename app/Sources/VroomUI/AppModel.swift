@@ -193,6 +193,45 @@ public final class AppModel {
         NSApp.terminate(nil)
     }
 
+    // MARK: Language
+
+    /// The language chosen in Settings, stored as an `AppleLanguages` override in the app's
+    /// own defaults; nil follows the macOS language order. It applies on the next launch.
+    var appLanguage: String? = AppModel.languageOverride() {
+        didSet {
+            guard appLanguage != oldValue else { return }
+            if let appLanguage {
+                UserDefaults.standard.set([appLanguage], forKey: "AppleLanguages")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+            }
+        }
+    }
+
+    /// The override this process started with: a different choice needs a relaunch.
+    let launchLanguage = AppModel.languageOverride()
+
+    /// Read from the app's domain only; `UserDefaults.standard` would also return the system-wide list.
+    private static func languageOverride() -> String? {
+        guard let id = Bundle.main.bundleIdentifier,
+              let list = UserDefaults.standard.persistentDomain(forName: id)?["AppleLanguages"] as? [String]
+        else { return nil }
+        return list.first
+    }
+
+    /// The languages this build ships (one `.lproj` each), named in their own language.
+    static let availableLanguages: [(code: String, name: String)] = {
+        var seen = Set<String>()
+        return Bundle.main.localizations
+            .filter { $0 != "Base" && seen.insert($0).inserted }
+            .map { code in
+                let locale = Locale(identifier: code)
+                let name = locale.localizedString(forLanguageCode: code)?.capitalized(with: locale) ?? code
+                return (code, name)
+            }
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+    }()
+
     // MARK: Recording
 
     var isRecording: Bool { phase != .idle }
@@ -227,17 +266,17 @@ public final class AppModel {
         canRecordScreen = Devices.canRecordScreen
         guard canRecordScreen else {
             Devices.requestScreen()
-            throw CLIError.failed(
-                "Vroom necesita permiso de Grabación de pantalla: actívalo en Ajustes del Sistema › Privacidad y seguridad y vuelve a abrir la app.")
+            throw CLIError.failed(String(localized:
+                "Vroom necesita permiso de Grabación de pantalla: actívalo en Ajustes del Sistema › Privacidad y seguridad y vuelve a abrir la app."))
         }
         var prefs = prefs
         if prefs.microphoneID != nil, !(await Devices.request(.audio)) {
             prefs.microphoneID = nil
-            show("Sin permiso para el micrófono: se graba sin audio")
+            show(String(localized: "Sin permiso para el micrófono: se graba sin audio"))
         }
         if prefs.cameraID != nil, !(await Devices.request(.video)) {
             prefs.cameraID = nil
-            show("Sin permiso para la cámara")
+            show(String(localized: "Sin permiso para la cámara"))
         }
         // What to record, and where it is on screen (AppKit coordinates).
         let target: CaptureTarget
@@ -289,7 +328,7 @@ public final class AppModel {
         let recorder = Recorder(settings: settings, url: entry.dirURL.appendingPathComponent("video.mp4"))
         recorder.onStop = { [weak self] error in
             Task { @MainActor [weak self] in
-                self?.lastError = error.map { "La grabación se detuvo: \($0.localizedDescription)" }
+                self?.lastError = error.map { String(localized: "La grabación se detuvo: \($0.localizedDescription)") }
                 self?.stopRecording()
             }
         }
@@ -299,8 +338,8 @@ public final class AppModel {
         } catch is Timeout.Expired {
             Task { await recorder.cancel() }
             canRecordScreen = Devices.canRecordScreen
-            throw CLIError.failed(
-                "macOS no ha dejado empezar la grabación. Revisa en Ajustes del Sistema › Privacidad y seguridad › Grabación de pantalla y audio del sistema que Vroom esté activado, y reabre Vroom.")
+            throw CLIError.failed(String(localized:
+                "macOS no ha dejado empezar la grabación. Revisa en Ajustes del Sistema › Privacidad y seguridad › Grabación de pantalla y audio del sistema que Vroom esté activado, y reabre Vroom."))
         }
         guard !Task.isCancelled else {
             await recorder.cancel()
@@ -396,12 +435,12 @@ public final class AppModel {
     private func afterRecording(_ entry: Entry) async {
         if prefs.transcribe && canTranscribe { transcribe(entry) }
         guard cloudReady, config?.config.autoUpload == true else {
-            show("Grabación guardada")
+            show(String(localized: "Grabación guardada"))
             return
         }
         if let cli, let link = try? await cli.link(["share", entry.id, "--before-upload"]) {
             copy(link.url.absoluteString)
-            show("Enlace copiado; se está subiendo")
+            show(String(localized: "Enlace copiado; se está subiendo"))
         }
         sync()
     }
@@ -425,15 +464,20 @@ public final class AppModel {
                         Task { @MainActor [weak self] in self?.handle(event) }
                     }
                 } catch {
-                    // Per-recording failures already showed up as warnings.
-                    // A Loom import from the terminal holds the lock; it uploads as it goes.
-                    let m = error.localizedDescription
-                    if !m.contains("se reintentarán") && !m.contains("sincronización en marcha") { lastError = m }
+                    if !Self.isQuiet(error) { lastError = error.localizedDescription }
                 }
                 transfers = [:]
                 await refresh()
             } while syncAgain
         }
+    }
+
+    /// vroom failures that need no banner: per-recording failures already showed up as
+    /// warnings, a Loom import from the terminal holds the lock (it uploads as it goes),
+    /// or R2 is not set up yet.
+    static func isQuiet(_ error: Error) -> Bool {
+        guard case let .failed(_, code)? = error as? CLIError else { return false }
+        return [ErrorCode.busy, ErrorCode.partial, ErrorCode.noCloud].contains(code)
     }
 
     private func handle(_ event: Event) {
@@ -458,9 +502,10 @@ public final class AppModel {
                 let link = try await cli.link(["share", entry.id] + (entry.isInCloud ? [] : ["--before-upload"]))
                 copy(link.url.absoluteString)
                 if let expires = link.expiresAt {
-                    show("Enlace copiado (caduca el \(expires.formatted(date: .abbreviated, time: .omitted)))")
+                    show(String(localized: "Enlace copiado (caduca el \(expires.formatted(date: .abbreviated, time: .omitted)))"))
                 } else {
-                    show(entry.isInCloud ? "Enlace copiado" : "Enlace copiado; funcionará al terminar la subida")
+                    show(entry.isInCloud ? String(localized: "Enlace copiado")
+                         : String(localized: "Enlace copiado; funcionará al terminar la subida"))
                 }
             } catch {
                 lastError = error.localizedDescription
@@ -533,11 +578,11 @@ public final class AppModel {
     }
 
     func freeLocal(_ entry: Entry) {
-        run(["free", entry.id]) { $0.show("Copia local borrada; sigue en R2") }
+        run(["free", entry.id]) { $0.show(String(localized: "Copia local borrada; sigue en R2")) }
     }
 
     func delete(_ entry: Entry, keepCloud: Bool) {
-        run(["delete", entry.id] + (keepCloud ? ["--keep-cloud"] : [])) { $0.show("Grabación eliminada") }
+        run(["delete", entry.id] + (keepCloud ? ["--keep-cloud"] : [])) { $0.show(String(localized: "Grabación eliminada")) }
     }
 
     private func run(_ args: [String], then: @escaping (AppModel) -> Void = { _ in }) {
@@ -583,7 +628,7 @@ public final class AppModel {
                         case let .progress(id, done, total) where total > 0:
                             self?.transcribing[id] = Double(done) / Double(total)
                         case let .warning(_, message):
-                            self?.lastError = "Transcripción: \(message)"
+                            self?.lastError = String(localized: "Transcripción: \(message)")
                         default:
                             break
                         }
@@ -613,7 +658,7 @@ public final class AppModel {
                         }
                     }
                 }
-                show("Modelo de Whisper descargado")
+                show(String(localized: "Modelo de Whisper descargado"))
             } catch {
                 lastError = error.localizedDescription
             }
@@ -668,7 +713,7 @@ public final class AppModel {
             let events = try await cli.run(["restore"])
             await refresh()
             for case let .ok(message) in events { return message }
-            return "Hecho"
+            return String(localized: "Hecho")
         } catch {
             return error.localizedDescription
         }
@@ -678,7 +723,7 @@ public final class AppModel {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
-            lastError = "No se pudo cambiar el inicio de sesión: \(error.localizedDescription)"
+            lastError = String(localized: "No se pudo cambiar el inicio de sesión: \(error.localizedDescription)")
         }
         openAtLogin = SMAppService.mainApp.status == .enabled
     }

@@ -4,9 +4,10 @@
 use crate::r2::{MAX_PRESIGN, R2};
 use std::collections::BTreeSet;
 use time::OffsetDateTime;
+use vroom_core::i18n::t;
 use vroom_core::layout::{self, AFTER_VIDEO, CAPTIONS, META, PAGE, THUMB, VIDEO};
 use vroom_core::library::{captions_hash, Library, State};
-use vroom_core::share;
+use vroom_core::{share, tr};
 
 /// Upload everything of one recording that is not in R2 yet: the video (resuming
 /// a previous attempt), then the thumbnail, captions, share page and `meta.json`.
@@ -42,7 +43,7 @@ fn upload_inner(
     let first_private = !state.meta_private;
     if video_needed {
         if !video.is_file() {
-            return Err("no hay vídeo local que subir".into());
+            return Err(t("no hay vídeo local que subir"));
         }
         let key = layout::key(&r2.prefix, id, VIDEO);
         r2.upload_file(
@@ -185,7 +186,7 @@ pub fn restore(r2: &R2, lib: &Library, mut added: impl FnMut(&str)) -> Result<Re
         let key = if is_private { layout::private_meta_key(&private, id) } else { layout::key(&r2.prefix, id, META) };
         let Some(bytes) = r2.get_bytes(&key)? else { continue };
         let meta: vroom_core::Meta =
-            serde_json::from_slice(&bytes).map_err(|e| format!("meta.json de {id} no es válido: {e}"))?;
+            serde_json::from_slice(&bytes).map_err(|e| tr!("meta.json de {id} no es válido: {e}", id, e))?;
         let id = id.as_str();
         if meta.id != id {
             continue;
@@ -219,7 +220,7 @@ pub fn download(r2: &R2, lib: &Library, id: &str, progress: impl FnMut(u64, u64)
 /// Remove every object of a recording from R2 (and any half-finished upload).
 pub fn delete_remote(r2: &R2, lib: &Library, id: &str) -> Result<(), String> {
     if !vroom_core::id::is_valid(id) {
-        return Err(format!("id no válido: {id}"));
+        return Err(tr!("id no válido: {id}", id));
     }
     let state = lib.state(id);
     if let Some(mp) = &state.multipart {

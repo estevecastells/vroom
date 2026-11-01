@@ -1,0 +1,6 @@
+/*
+  Spanish strings of the macOS app.
+
+  The keys in the Swift sources are already the Spanish text, so this table needs no
+  entries; it exists so that Spanish is an available localization. See en.lproj.
+*/

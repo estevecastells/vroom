@@ -5,16 +5,27 @@ import Foundation
 
 public enum CLIError: Error, LocalizedError, Equatable {
     case missingBinary
-    case failed(String)
+    /// `code` is set for failures the app handles on its own (`ErrorCode`).
+    case failed(String, code: String? = nil)
     case badOutput(String)
 
     public var errorDescription: String? {
         switch self {
-        case .missingBinary: "No se encuentra el programa vroom dentro de la app."
-        case let .failed(m): m
-        case let .badOutput(m): "Respuesta inesperada de vroom: \(m)"
+        case .missingBinary: String(localized: "No se encuentra el programa vroom dentro de la app.")
+        case let .failed(m, _): m
+        case let .badOutput(m): String(localized: "Respuesta inesperada de vroom: \(m)")
         }
     }
+}
+
+/// Values of an error event's `code` (`error_code` in crates/vroom-core/src/protocol.rs).
+public enum ErrorCode {
+    /// Another vroom (a Loom import) holds the library.
+    public static let busy = "busy"
+    /// Some recordings failed; each was a warning already.
+    public static let partial = "partial"
+    /// R2 is not set up.
+    public static let noCloud = "no_cloud"
 }
 
 public struct CLI: Sendable {
@@ -37,6 +48,14 @@ public struct CLI: Sendable {
 
     public init(binary: URL) { self.binary = binary }
 
+    /// The inherited environment plus `VROOM_LANG`, so the CLI's messages come back
+    /// in the language the app is showing.
+    static var environment: [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["VROOM_LANG"] = Bundle.main.preferredLocalizations.first ?? "en"
+        return env
+    }
+
     /// Run to completion and return every event; an `error` event throws.
     @discardableResult
     public func run(_ args: [String], stdin: String? = nil) async throws -> [Event] {
@@ -51,6 +70,7 @@ public struct CLI: Sendable {
         let process = Process()
         process.executableURL = binary
         process.arguments = ["--json"] + args
+        process.environment = Self.environment
         let out = Pipe()
         let err = Pipe()
         process.standardOutput = out
@@ -62,7 +82,7 @@ public struct CLI: Sendable {
         try? input.fileHandleForWriting.close()
 
         let cancel = { if process.isRunning { process.terminate() } }
-        let lastError = LockedBox<String?>(nil)
+        let lastError = LockedBox<(String, String?)?>(nil)
         try await withTaskCancellationHandler {
             for try await line in out.fileHandleForReading.bytes.lines {
                 guard let data = line.data(using: .utf8), !data.isEmpty else { continue }
@@ -70,15 +90,16 @@ public struct CLI: Sendable {
                 do { event = try JSONDecoder.vroom.decode(Event.self, from: data) } catch {
                     throw CLIError.badOutput("\(line.prefix(200)) — \(error)")
                 }
-                if case let .error(message) = event { lastError.value = message }
+                if case let .error(message, code) = event { lastError.value = (message, code) }
                 onEvent(event)
             }
         } onCancel: { cancel() }
         process.waitUntilExit()
-        if let message = lastError.value { throw CLIError.failed(message) }
+        if let (message, code) = lastError.value { throw CLIError.failed(message, code: code) }
         if process.terminationStatus != 0 {
             let stderr = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            throw CLIError.failed(stderr.isEmpty ? "vroom terminó con código \(process.terminationStatus)" : stderr)
+            let code = Int(process.terminationStatus)
+            throw CLIError.failed(stderr.isEmpty ? String(localized: "vroom terminó con código \(code)") : stderr)
         }
     }
 

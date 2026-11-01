@@ -13,10 +13,19 @@ use std::path::Path;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use vroom_core::config::Config;
+use vroom_core::i18n::t;
 use vroom_core::layout::{THUMB, VIDEO};
 use vroom_core::library::{Entry, Status};
 use vroom_core::protocol::Event;
 use vroom_core::share::format_duration;
+use vroom_core::tr;
+
+/// vroom.exe failures that need no banner: per-recording failures were warnings
+/// already, another vroom (a Loom import) holds the library, or R2 is not set up.
+fn is_quiet(code: &Option<String>) -> bool {
+    use vroom_core::protocol::error_code::{BUSY, NO_CLOUD, PARTIAL};
+    matches!(code.as_deref(), Some(BUSY | PARTIAL | NO_CLOUD))
+}
 
 enum Msg {
     Entries(Vec<Entry>),
@@ -147,13 +156,13 @@ impl VroomApp {
         let tray = match Tray::new(cc.egui_ctx.clone(), tray_tx) {
             Ok(t) => Some(t),
             Err(e) => {
-                error = Some(format!("icono de la bandeja: {e}"));
+                error = Some(tr!("icono de la bandeja: {e}", e));
                 None
             }
         };
         let cli = Cli::locate();
         if cli.is_none() {
-            error = Some("No se encuentra vroom.exe: debe estar en la misma carpeta que Vroom.exe.".into());
+            error = Some(t("No se encuentra vroom.exe: debe estar en la misma carpeta que Vroom.exe."));
         }
         let mut app = VroomApp {
             cli,
@@ -298,7 +307,7 @@ impl VroomApp {
             let result = (*recorder).stop();
             if discard {
                 let _ = cli.run(&["delete", &id, "--keep-cloud"]);
-                mail.send(Msg::Toast("Grabación descartada".into()));
+                mail.send(Msg::Toast(t("Grabación descartada")));
                 mail.send(Msg::StartAborted);
                 load_library(cli, mail);
                 return;
@@ -307,7 +316,7 @@ impl VroomApp {
                 Ok(r) => r,
                 Err(e) => {
                     // What reached the disk stays; `recover` makes it a normal recording.
-                    mail.send(Msg::Error(format!("La grabación no se cerró bien: {e}")));
+                    mail.send(Msg::Error(tr!("La grabación no se cerró bien: {e}", e)));
                     let _ = cli.run(&["recover"]);
                     mail.send(Msg::StartAborted);
                     load_library(cli, mail);
@@ -334,13 +343,13 @@ impl VroomApp {
         }
         let auto_upload = self.config.as_ref().is_some_and(|(c, _, _)| c.auto_upload);
         if !(self.cloud_ready() && auto_upload) {
-            self.toast("Grabación guardada");
+            self.toast(t("Grabación guardada"));
             return;
         }
         let id = entry.meta.id.clone();
         self.spawn(move |cli, mail| {
             if let Ok(url) = cli.link(&["share", &id, "--before-upload"]) {
-                mail.send(Msg::Copy(url, "Enlace copiado; se está subiendo".into()));
+                mail.send(Msg::Copy(url, t("Enlace copiado; se está subiendo")));
             }
         });
         self.sync();
@@ -359,7 +368,7 @@ impl VroomApp {
         }
         self.syncing = true;
         self.spawn(|cli, mail| {
-            let result = cli.stream(&["sync"], |e| match e {
+            let result = cli.stream_coded(&["sync"], None, &[], |e| match e {
                 Event::Progress { id, done, total } if total > 0 => {
                     mail.send(Msg::Transfer(id, Some(done as f64 / total as f64)))
                 }
@@ -367,9 +376,8 @@ impl VroomApp {
                 Event::Warning { message, .. } => mail.send(Msg::Error(message)),
                 _ => {}
             });
-            if let Err(m) = result {
-                // Per-recording failures were warnings; a Loom import may hold the lock.
-                if !m.contains("se reintentarán") && !m.contains("sincronización en marcha") && !m.contains("R2 no") {
+            if let Err((m, code)) = result {
+                if !is_quiet(&code) {
                     mail.send(Msg::Error(m));
                 }
             }
@@ -396,16 +404,16 @@ impl VroomApp {
     fn transcribe_next(&mut self) {
         let Some(id) = self.transcribe_queue.front().cloned() else { return };
         self.spawn(move |cli, mail| {
-            let result = cli.stream(&["transcribe", &id], |e| match e {
+            let result = cli.stream_coded(&["transcribe", &id], None, &[], |e| match e {
                 Event::Progress { id, done, total } if total > 0 => {
                     mail.send(Msg::Transcribing(id, Some(done as f64 / total as f64)))
                 }
-                Event::Warning { message, .. } => mail.send(Msg::Error(format!("Transcripción: {message}"))),
+                Event::Warning { message, .. } => mail.send(Msg::Error(tr!("Transcripción: {message}", message))),
                 _ => {}
             });
-            if let Err(e) = result {
-                if !e.contains("transcripciones fallaron") {
-                    mail.send(Msg::Error(format!("Transcripción: {e}")));
+            if let Err((e, code)) = result {
+                if !is_quiet(&code) {
+                    mail.send(Msg::Error(tr!("Transcripción: {e}", e)));
                 }
             }
             mail.send(Msg::Transcribing(id, None));
@@ -523,11 +531,11 @@ impl VroomApp {
                     match cli.link(&args) {
                         Ok(url) => {
                             let m = if in_cloud {
-                                "Enlace copiado"
+                                t("Enlace copiado")
                             } else {
-                                "Enlace copiado; funcionará al terminar la subida"
+                                t("Enlace copiado; funcionará al terminar la subida")
                             };
-                            mail.send(Msg::Copy(url, m.into()));
+                            mail.send(Msg::Copy(url, m));
                         }
                         Err(e) => mail.send(Msg::Error(e)),
                     }
@@ -542,7 +550,7 @@ impl VroomApp {
             Action::Transcribe(entry) => self.transcribe(&entry),
             Action::Upload => self.sync(),
             Action::Free(entry) => {
-                self.run_then_refresh(vec!["free".into(), entry.meta.id], "Copia local borrada; sigue en R2")
+                self.run_then_refresh(vec!["free".into(), entry.meta.id], t("Copia local borrada; sigue en R2"))
             }
             Action::Download(entry) => {
                 let id = entry.meta.id.clone();
@@ -568,13 +576,14 @@ impl VroomApp {
     }
 
     /// A short library command, then a refresh and a sync (titles and folders go to R2 too).
-    fn run_then_refresh(&mut self, args: Vec<String>, done: &'static str) {
+    /// `done` is the toast on success; empty for none.
+    fn run_then_refresh(&mut self, args: Vec<String>, done: String) {
         self.spawn(move |cli, mail| {
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             match cli.run(&args) {
                 Ok(_) => {
                     if !done.is_empty() {
-                        mail.send(Msg::Toast(done.into()));
+                        mail.send(Msg::Toast(done));
                     }
                 }
                 Err(e) => mail.send(Msg::Error(e)),
@@ -631,13 +640,13 @@ fn open(target: &std::ffi::OsStr) {
     let _ = std::process::Command::new("explorer").arg(target).spawn();
 }
 
-fn status_text(entry: &Entry) -> &'static str {
+fn status_text(entry: &Entry) -> String {
     match entry.status {
-        Status::Recording => "grabando",
-        Status::Local => "solo en este PC",
-        Status::Uploading => "subiendo",
-        Status::Synced => "en R2",
-        Status::Cloud => "solo en R2",
+        Status::Recording => t("grabando"),
+        Status::Local => t("solo en este PC"),
+        Status::Uploading => t("subiendo"),
+        Status::Synced => t("en R2"),
+        Status::Cloud => t("solo en R2"),
     }
 }
 
@@ -704,23 +713,27 @@ impl VroomApp {
             ui.add_space(4.0);
             match &self.phase {
                 Phase::Idle => {
-                    let record = egui::Button::new(RichText::new("● Grabar").color(Color32::WHITE).strong())
+                    let record = egui::Button::new(RichText::new(t("● Grabar")).color(Color32::WHITE).strong())
                         .fill(Color32::from_rgb(220, 38, 69));
-                    if ui.add_enabled(self.cli.is_some(), record).on_hover_text("Alt+Mayús+R").clicked() {
+                    if ui.add_enabled(self.cli.is_some(), record).on_hover_text(t("Alt+Mayús+R")).clicked() {
                         self.start_recording(ctx);
                     }
                     egui::ComboBox::from_id_salt("mode")
                         .selected_text(match self.prefs.capture_mode {
-                            CaptureMode::Screen => "Pantalla completa",
-                            CaptureMode::Pick => "Elegir ventana…",
+                            CaptureMode::Screen => t("Pantalla completa"),
+                            CaptureMode::Pick => t("Elegir ventana…"),
                         })
                         .show_ui(ui, |ui| {
                             let before = self.prefs.capture_mode;
-                            ui.selectable_value(&mut self.prefs.capture_mode, CaptureMode::Screen, "Pantalla completa");
+                            ui.selectable_value(
+                                &mut self.prefs.capture_mode,
+                                CaptureMode::Screen,
+                                t("Pantalla completa"),
+                            );
                             ui.selectable_value(
                                 &mut self.prefs.capture_mode,
                                 CaptureMode::Pick,
-                                "Elegir ventana o pantalla…",
+                                t("Elegir ventana o pantalla…"),
                             );
                             if self.prefs.capture_mode != before {
                                 self.prefs.save();
@@ -730,29 +743,29 @@ impl VroomApp {
                 Phase::Recording { recorder, .. } => {
                     let elapsed = format_duration(recorder.elapsed().as_secs_f64());
                     ui.label(RichText::new(format!("● {elapsed}")).color(Color32::from_rgb(220, 38, 69)).strong());
-                    if ui.button("■ Detener").clicked() {
+                    if ui.button(t("■ Detener")).clicked() {
                         self.stop_recording(false);
                     }
-                    if ui.button("Descartar").clicked() {
+                    if ui.button(t("Descartar")).clicked() {
                         self.stop_recording(true);
                     }
                 }
                 Phase::Starting => {
                     ui.spinner();
-                    ui.label("Preparando…");
+                    ui.label(t("Preparando…"));
                 }
                 Phase::Stopping => {
                     ui.spinner();
-                    ui.label("Guardando…");
+                    ui.label(t("Guardando…"));
                 }
             }
             ui.separator();
-            ui.selectable_value(&mut self.tab, Tab::Library, "Biblioteca");
-            ui.selectable_value(&mut self.tab, Tab::Settings, "Ajustes");
+            ui.selectable_value(&mut self.tab, Tab::Library, t("Biblioteca"));
+            ui.selectable_value(&mut self.tab, Tab::Settings, t("Ajustes"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.syncing {
                     ui.spinner();
-                } else if ui.add_enabled(self.cloud_ready(), egui::Button::new("Sincronizar")).clicked() {
+                } else if ui.add_enabled(self.cloud_ready(), egui::Button::new(t("Sincronizar"))).clicked() {
                     self.sync();
                 }
             });
@@ -769,15 +782,15 @@ impl VroomApp {
             } else if let Some((t, _)) = &self.toast {
                 ui.label(t);
             } else {
-                ui.weak(format!("{} grabaciones", self.entries.len()));
+                ui.weak(tr!("{n} grabaciones", n = self.entries.len()));
             }
         });
     }
 
     fn sidebar(&mut self, ui: &mut Ui) {
         ui.add_space(6.0);
-        ui.selectable_value(&mut self.filter, Filter::All, "Todas");
-        ui.selectable_value(&mut self.filter, Filter::Unfiled, "Sin carpeta");
+        ui.selectable_value(&mut self.filter, Filter::All, t("Todas"));
+        ui.selectable_value(&mut self.filter, Filter::Unfiled, t("Sin carpeta"));
         ui.separator();
         for folder in self.folders.clone() {
             let depth = folder.matches('/').count();
@@ -790,20 +803,20 @@ impl VroomApp {
                     self.filter = Filter::Folder(folder.clone());
                 }
                 r.context_menu(|ui| {
-                    if ui.button("Nueva subcarpeta…").clicked() {
+                    if ui.button(t("Nueva subcarpeta…")).clicked() {
                         self.dialog = Some(Dialog::NewFolder(format!("{folder}/")));
                     }
-                    if ui.button("Renombrar…").clicked() {
+                    if ui.button(t("Renombrar…")).clicked() {
                         self.dialog = Some(Dialog::RenameFolder(folder.clone(), folder.clone()));
                     }
-                    if ui.button("Eliminar carpeta…").clicked() {
+                    if ui.button(t("Eliminar carpeta…")).clicked() {
                         self.dialog = Some(Dialog::DeleteFolder(folder.clone()));
                     }
                 });
             });
         }
         ui.add_space(6.0);
-        if ui.button("＋ Nueva carpeta").clicked() {
+        if ui.button(t("＋ Nueva carpeta")).clicked() {
             self.dialog = Some(Dialog::NewFolder(String::new()));
         }
     }
@@ -821,7 +834,7 @@ impl VroomApp {
             .collect();
         if filtered.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.weak("Sin grabaciones. Pulsa Alt+Mayús+R o el botón Grabar para empezar.");
+                ui.weak(t("Sin grabaciones. Pulsa Alt+Mayús+R o el botón Grabar para empezar."));
             });
             return;
         }
@@ -860,11 +873,11 @@ impl VroomApp {
                 if let Some(p) = self.transfers.get(&entry.meta.id).copied().or(entry.progress) {
                     ui.add(egui::ProgressBar::new(p as f32).desired_height(4.0));
                 }
-                if let Some(t) = self.transcribing.get(&entry.meta.id) {
-                    ui.small(if *t > 0.0 {
-                        format!("Transcribiendo {} %", (t * 100.0) as u32)
+                if let Some(p) = self.transcribing.get(&entry.meta.id) {
+                    ui.small(if *p > 0.0 {
+                        tr!("Transcribiendo {percent} %", percent = (p * 100.0) as u32)
                     } else {
-                        "Transcripción en cola".into()
+                        t("Transcripción en cola")
                     });
                 }
                 ui.label(RichText::new(&entry.meta.title).strong());
@@ -884,23 +897,23 @@ impl VroomApp {
         }
         response.context_menu(|ui| {
             let mut pick = |a: Action| action = Some(a);
-            if ui.button("Reproducir").clicked() {
+            if ui.button(t("Reproducir")).clicked() {
                 pick(Action::Play(entry.clone()));
             }
-            if ui.add_enabled(self.cloud_ready(), egui::Button::new("Copiar enlace")).clicked() {
+            if ui.add_enabled(self.cloud_ready(), egui::Button::new(t("Copiar enlace"))).clicked() {
                 pick(Action::CopyLink(entry.clone()));
             }
-            if ui.button("Renombrar…").clicked() {
+            if ui.button(t("Renombrar…")).clicked() {
                 pick(Action::Dialog(Dialog::Rename(entry.clone(), entry.meta.title.clone())));
             }
-            if ui.button("Mover a carpeta…").clicked() {
+            if ui.button(t("Mover a carpeta…")).clicked() {
                 pick(Action::Dialog(Dialog::Move(entry.clone(), entry.meta.folder.clone().unwrap_or_default())));
             }
             if entry.video.is_some() {
-                if ui.button("Mostrar en el Explorador").clicked() {
+                if ui.button(t("Mostrar en el Explorador")).clicked() {
                     pick(Action::Reveal(entry.clone()));
                 }
-                let label = if entry.captions.is_none() { "Transcribir" } else { "Volver a transcribir" };
+                let label = if entry.captions.is_none() { t("Transcribir") } else { t("Volver a transcribir") };
                 let enabled = self.can_transcribe() && !self.transcribing.contains_key(&entry.meta.id);
                 if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
                     pick(Action::Transcribe(entry.clone()));
@@ -909,24 +922,24 @@ impl VroomApp {
             ui.separator();
             match entry.status {
                 Status::Local | Status::Uploading => {
-                    if ui.add_enabled(self.cloud_ready(), egui::Button::new("Subir ahora")).clicked() {
+                    if ui.add_enabled(self.cloud_ready(), egui::Button::new(t("Subir ahora"))).clicked() {
                         pick(Action::Upload);
                     }
                 }
                 Status::Synced => {
-                    if ui.button("Liberar espacio en este PC").clicked() {
+                    if ui.button(t("Liberar espacio en este PC")).clicked() {
                         pick(Action::Free(entry.clone()));
                     }
                 }
                 Status::Cloud => {
-                    if ui.button("Descargar a este PC").clicked() {
+                    if ui.button(t("Descargar a este PC")).clicked() {
                         pick(Action::Download(entry.clone()));
                     }
                 }
                 Status::Recording => {}
             }
             ui.separator();
-            if ui.button(RichText::new("Eliminar…").color(Color32::from_rgb(220, 60, 60))).clicked() {
+            if ui.button(RichText::new(t("Eliminar…")).color(Color32::from_rgb(220, 60, 60))).clicked() {
                 pick(Action::Dialog(Dialog::Delete(entry.clone())));
             }
         });
@@ -936,20 +949,23 @@ impl VroomApp {
     fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.dialog.take() else { return };
         let mut close = false;
-        let mut run: Option<(Vec<String>, &'static str)> = None;
+        let mut run: Option<(Vec<String>, String)> = None;
         let modal = egui::Modal::new(egui::Id::unique("dialog")).show(ctx, |ui| {
             ui.set_width(360.0);
             match &mut dialog {
                 Dialog::Rename(entry, title) => {
-                    ui.heading("Renombrar");
+                    ui.heading(t("Renombrar"));
                     ui.text_edit_singleline(title);
-                    if ok_cancel(ui, "Guardar", &mut close) {
-                        run = Some((vec!["rename".into(), entry.meta.id.clone(), "--".into(), title.clone()], ""));
+                    if ok_cancel(ui, &t("Guardar"), &mut close) {
+                        run = Some((
+                            vec!["rename".into(), entry.meta.id.clone(), "--".into(), title.clone()],
+                            String::new(),
+                        ));
                     }
                 }
                 Dialog::Move(entry, folder) => {
-                    ui.heading("Mover a carpeta");
-                    ui.label("Carpeta (vacía para el nivel superior; usa / para subcarpetas):");
+                    ui.heading(t("Mover a carpeta"));
+                    ui.label(t("Carpeta (vacía para el nivel superior; usa / para subcarpetas):"));
                     ui.text_edit_singleline(folder);
                     egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
                         for f in &self.folders {
@@ -958,49 +974,55 @@ impl VroomApp {
                             }
                         }
                     });
-                    if ok_cancel(ui, "Mover", &mut close) {
-                        run = Some((vec!["move".into(), entry.meta.id.clone(), "--".into(), folder.clone()], ""));
+                    if ok_cancel(ui, &t("Mover"), &mut close) {
+                        run = Some((
+                            vec!["move".into(), entry.meta.id.clone(), "--".into(), folder.clone()],
+                            String::new(),
+                        ));
                     }
                 }
                 Dialog::Delete(entry) => {
-                    ui.heading("¿Eliminar la grabación?");
+                    ui.heading(t("¿Eliminar la grabación?"));
                     ui.label(&entry.meta.title);
                     let in_cloud = matches!(entry.status, Status::Synced | Status::Cloud | Status::Uploading);
                     ui.horizontal(|ui| {
-                        if in_cloud && ui.button("Eliminar de este PC y de R2").clicked() {
-                            run = Some((vec!["delete".into(), entry.meta.id.clone()], "Grabación eliminada"));
+                        if in_cloud && ui.button(t("Eliminar de este PC y de R2")).clicked() {
+                            run = Some((vec!["delete".into(), entry.meta.id.clone()], t("Grabación eliminada")));
                         }
-                        let label = if in_cloud { "Eliminar solo de este PC" } else { "Eliminar" };
+                        let label = if in_cloud { t("Eliminar solo de este PC") } else { t("Eliminar") };
                         if ui.button(label).clicked() {
                             run = Some((
                                 vec!["delete".into(), entry.meta.id.clone(), "--keep-cloud".into()],
-                                "Grabación eliminada",
+                                t("Grabación eliminada"),
                             ));
                         }
-                        if ui.button("Cancelar").clicked() {
+                        if ui.button(t("Cancelar")).clicked() {
                             close = true;
                         }
                     });
                 }
                 Dialog::NewFolder(path) => {
-                    ui.heading("Nueva carpeta");
+                    ui.heading(t("Nueva carpeta"));
                     ui.text_edit_singleline(path);
-                    if ok_cancel(ui, "Crear", &mut close) {
-                        run = Some((vec!["folder".into(), "create".into(), "--".into(), path.clone()], ""));
+                    if ok_cancel(ui, &t("Crear"), &mut close) {
+                        run = Some((vec!["folder".into(), "create".into(), "--".into(), path.clone()], String::new()));
                     }
                 }
                 Dialog::RenameFolder(from, to) => {
-                    ui.heading("Renombrar carpeta");
+                    ui.heading(t("Renombrar carpeta"));
                     ui.text_edit_singleline(to);
-                    if ok_cancel(ui, "Guardar", &mut close) {
-                        run = Some((vec!["folder".into(), "rename".into(), "--".into(), from.clone(), to.clone()], ""));
+                    if ok_cancel(ui, &t("Guardar"), &mut close) {
+                        run = Some((
+                            vec!["folder".into(), "rename".into(), "--".into(), from.clone(), to.clone()],
+                            String::new(),
+                        ));
                     }
                 }
                 Dialog::DeleteFolder(path) => {
-                    ui.heading("¿Eliminar la carpeta?");
-                    ui.label(format!("Las grabaciones de «{path}» pasan a la carpeta de arriba."));
-                    if ok_cancel(ui, "Eliminar carpeta", &mut close) {
-                        run = Some((vec!["folder".into(), "delete".into(), "--".into(), path.clone()], ""));
+                    ui.heading(t("¿Eliminar la carpeta?"));
+                    ui.label(tr!("Las grabaciones de «{path}» pasan a la carpeta de arriba.", path));
+                    if ok_cancel(ui, &t("Eliminar carpeta"), &mut close) {
+                        run = Some((vec!["folder".into(), "delete".into(), "--".into(), path.clone()], String::new()));
                     }
                 }
             }
@@ -1022,51 +1044,55 @@ impl VroomApp {
 
     fn settings(&mut self, ui: &mut Ui) {
         ui.add_space(8.0);
-        ui.heading("Grabación");
+        ui.heading(t("Idioma"));
+        self.language_settings(ui);
+
+        ui.add_space(16.0);
+        ui.heading(t("Grabación"));
         let mut prefs = self.prefs.clone();
         egui::Grid::new("recording").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-            ui.label("Qué grabar");
+            ui.label(t("Qué grabar"));
             egui::ComboBox::from_id_salt("s-mode")
                 .selected_text(match prefs.capture_mode {
-                    CaptureMode::Screen => "Pantalla completa",
-                    CaptureMode::Pick => "Elegir ventana o pantalla al grabar",
+                    CaptureMode::Screen => t("Pantalla completa"),
+                    CaptureMode::Pick => t("Elegir ventana o pantalla al grabar"),
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut prefs.capture_mode, CaptureMode::Screen, "Pantalla completa");
+                    ui.selectable_value(&mut prefs.capture_mode, CaptureMode::Screen, t("Pantalla completa"));
                     ui.selectable_value(
                         &mut prefs.capture_mode,
                         CaptureMode::Pick,
-                        "Elegir ventana o pantalla al grabar",
+                        t("Elegir ventana o pantalla al grabar"),
                     );
                 });
             ui.end_row();
-            ui.label("Pantalla");
-            let current = prefs.monitor.and_then(|i| self.monitors.get(i).cloned()).unwrap_or("Principal".into());
+            ui.label(t("Pantalla"));
+            let current = prefs.monitor.and_then(|i| self.monitors.get(i).cloned()).unwrap_or_else(|| t("Principal"));
             egui::ComboBox::from_id_salt("s-monitor").selected_text(current).show_ui(ui, |ui| {
-                ui.selectable_value(&mut prefs.monitor, None, "Principal");
+                ui.selectable_value(&mut prefs.monitor, None, t("Principal"));
                 for (i, name) in self.monitors.iter().enumerate() {
                     ui.selectable_value(&mut prefs.monitor, Some(i), name);
                 }
             });
             ui.end_row();
-            ui.label("Micrófono");
+            ui.label(t("Micrófono"));
             let current = match prefs.microphone.as_deref() {
-                None => "Predeterminado".to_string(),
-                Some("") => "Sin micrófono".to_string(),
+                None => t("Predeterminado"),
+                Some("") => t("Sin micrófono"),
                 Some(name) => name.to_string(),
             };
             egui::ComboBox::from_id_salt("s-mic").selected_text(current).show_ui(ui, |ui| {
-                ui.selectable_value(&mut prefs.microphone, None, "Predeterminado");
-                ui.selectable_value(&mut prefs.microphone, Some(String::new()), "Sin micrófono");
+                ui.selectable_value(&mut prefs.microphone, None, t("Predeterminado"));
+                ui.selectable_value(&mut prefs.microphone, Some(String::new()), t("Sin micrófono"));
                 for name in &self.microphones {
                     ui.selectable_value(&mut prefs.microphone, Some(name.clone()), name);
                 }
             });
             ui.end_row();
-            ui.label("Audio del sistema");
-            ui.checkbox(&mut prefs.system_audio, "Grabar también lo que suena en el PC");
+            ui.label(t("Audio del sistema"));
+            ui.checkbox(&mut prefs.system_audio, t("Grabar también lo que suena en el PC"));
             ui.end_row();
-            ui.label("Fotogramas");
+            ui.label(t("Fotogramas"));
             egui::ComboBox::from_id_salt("s-fps").selected_text(format!("{} fps", prefs.fps)).show_ui(ui, |ui| {
                 for fps in [15, 30, 60] {
                     ui.selectable_value(&mut prefs.fps, fps, format!("{fps} fps"));
@@ -1084,41 +1110,69 @@ impl VroomApp {
         self.cloud_settings(ui);
 
         ui.add_space(16.0);
-        ui.heading("Biblioteca");
+        ui.heading(t("Biblioteca"));
         self.library_settings(ui);
 
         ui.add_space(16.0);
-        ui.heading("Transcripción");
+        ui.heading(t("Transcripción"));
         self.transcription_settings(ui);
 
         ui.add_space(16.0);
-        ui.heading("Importar de Loom");
+        ui.heading(t("Importar de Loom"));
         self.loom_settings(ui);
         ui.add_space(16.0);
+    }
+
+    /// "Automático" follows Windows; a change applies at once, tray menu included.
+    fn language_settings(&mut self, ui: &mut Ui) {
+        let mut language = self.prefs.language.clone();
+        let current = match &language {
+            Some(code) => crate::lang::name(code),
+            None => t("Automático"),
+        };
+        egui::ComboBox::from_id_salt("s-language").selected_text(current).show_ui(ui, |ui| {
+            ui.selectable_value(&mut language, None, t("Automático"));
+            for code in vroom_core::i18n::available() {
+                let name = crate::lang::name(&code);
+                ui.selectable_value(&mut language, Some(code), name);
+            }
+        });
+        if language != self.prefs.language {
+            self.prefs.language = language;
+            self.prefs.save();
+            crate::lang::apply(self.prefs.language.as_deref());
+            if let Some(tray) = &self.tray {
+                tray.relabel(matches!(self.phase, Phase::Recording { .. }));
+            }
+            ui.ctx().request_repaint();
+        }
     }
 
     fn cloud_settings(&mut self, ui: &mut Ui) {
         match self.config.as_ref().and_then(|(c, _, secret)| c.r2.clone().map(|r| (r, *secret))) {
             Some((r2, has_secret)) => {
-                ui.label(format!(
-                    "Bucket «{}»{}",
-                    r2.bucket,
-                    r2.public_url.map(|u| format!(" · público en {u}")).unwrap_or_default()
+                ui.label(tr!(
+                    "Bucket «{bucket}»{public}",
+                    bucket = r2.bucket,
+                    public = r2.public_url.map(|url| tr!(" · público en {url}", url)).unwrap_or_default()
                 ));
                 if !has_secret {
                     ui.colored_label(
                         Color32::from_rgb(220, 60, 60),
-                        "Falta el secret en el Administrador de credenciales: vuelve a conectar.",
+                        t("Falta el secret en el Administrador de credenciales: vuelve a conectar."),
                     );
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Comprobar conexión").clicked() {
+                    if ui.button(t("Comprobar conexión")).clicked() {
                         self.spawn(|cli, mail| match cli.run(&["check"]) {
-                            Ok(_) => mail.send(Msg::Toast("R2 responde bien".into())),
+                            Ok(_) => mail.send(Msg::Toast(t("R2 responde bien"))),
                             Err(e) => mail.send(Msg::Error(e)),
                         });
                     }
-                    if ui.button("Restaurar desde R2").on_hover_text("Recupera la biblioteca en un PC nuevo").clicked()
+                    if ui
+                        .button(t("Restaurar desde R2"))
+                        .on_hover_text(t("Recupera la biblioteca en un PC nuevo"))
+                        .clicked()
                     {
                         self.spawn(|cli, mail| {
                             match cli.run(&["restore"]) {
@@ -1127,14 +1181,14 @@ impl VroomApp {
                                         Event::Ok { message } => Some(message.clone()),
                                         _ => None,
                                     });
-                                    mail.send(Msg::Toast(text.unwrap_or_else(|| "Biblioteca restaurada".into())));
+                                    mail.send(Msg::Toast(text.unwrap_or_else(|| t("Biblioteca restaurada"))));
                                 }
                                 Err(e) => mail.send(Msg::Error(e)),
                             }
                             load_library(cli, mail);
                         });
                     }
-                    if ui.button("Desconectar").clicked() {
+                    if ui.button(t("Desconectar")).clicked() {
                         self.spawn(|cli, mail| {
                             if let Err(e) = cli.run(&["config", "disconnect"]) {
                                 mail.send(Msg::Error(e));
@@ -1145,7 +1199,7 @@ impl VroomApp {
                 });
             }
             None => {
-                ui.label("Conecta tu bucket para tener copia de todo y enlaces para compartir. Crea un token de R2 con permiso de lectura y escritura en el panel de Cloudflare.");
+                ui.label(t("Conecta tu bucket para tener copia de todo y enlaces para compartir. Crea un token de R2 con permiso de lectura y escritura en el panel de Cloudflare."));
                 let f = &mut self.r2_form;
                 egui::Grid::new("r2").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
                     ui.label("Account ID");
@@ -1160,21 +1214,21 @@ impl VroomApp {
                     ui.label("Secret Access Key");
                     ui.add(egui::TextEdit::singleline(&mut f.secret).password(true));
                     ui.end_row();
-                    ui.label("URL pública (opcional)");
+                    ui.label(t("URL pública (opcional)"));
                     ui.add(egui::TextEdit::singleline(&mut f.public_url).hint_text("https://pub-….r2.dev"));
                     ui.end_row();
-                    ui.label("Prefijo (opcional)");
+                    ui.label(t("Prefijo (opcional)"));
                     ui.text_edit_singleline(&mut f.prefix);
                     ui.end_row();
                     ui.label("");
-                    ui.checkbox(&mut f.eu, "Bucket con jurisdicción UE");
+                    ui.checkbox(&mut f.eu, t("Bucket con jurisdicción UE"));
                     ui.end_row();
                 });
                 let ready = !f.account_id.trim().is_empty()
                     && !f.bucket.trim().is_empty()
                     && !f.access_key_id.trim().is_empty()
                     && !f.secret.is_empty();
-                if ui.add_enabled(ready, egui::Button::new("Conectar")).clicked() {
+                if ui.add_enabled(ready, egui::Button::new(t("Conectar"))).clicked() {
                     let mut args: Vec<String> = vec![
                         "config".into(),
                         "r2".into(),
@@ -1198,7 +1252,7 @@ impl VroomApp {
                     self.spawn(move |cli, mail| {
                         let a: Vec<&str> = args.iter().map(String::as_str).collect();
                         match cli.run_with(&a, Some(&secret), &[]).and_then(|_| cli.run(&["check"])) {
-                            Ok(_) => mail.send(Msg::Toast("R2 conectado".into())),
+                            Ok(_) => mail.send(Msg::Toast(t("R2 conectado"))),
                             Err(e) => mail.send(Msg::Error(e)),
                         }
                         load_config(cli, mail);
@@ -1214,28 +1268,28 @@ impl VroomApp {
             return;
         };
         ui.horizontal(|ui| {
-            ui.label("Carpeta");
+            ui.label(t("Carpeta"));
             ui.text_edit_singleline(&mut self.library_path);
-            if self.library_path.trim() != library && ui.button("Usar esta carpeta").clicked() {
+            if self.library_path.trim() != library && ui.button(t("Usar esta carpeta")).clicked() {
                 self.set_config("library", self.library_path.trim().to_string());
             }
-            if ui.button("Abrir").clicked() {
+            if ui.button(t("Abrir")).clicked() {
                 open(std::ffi::OsStr::new(&library));
             }
         });
         let mut auto = config.auto_upload;
-        if ui.checkbox(&mut auto, "Subir a R2 al terminar cada grabación").changed() {
+        if ui.checkbox(&mut auto, t("Subir a R2 al terminar cada grabación")).changed() {
             self.set_config("auto_upload", auto.to_string());
         }
         let mut days = config.keep_local_days;
         let label = |d: u32| {
             if d == 0 {
-                "Conservar siempre".to_string()
+                t("Conservar siempre")
             } else {
-                format!("Borrar {d} días después de subirla")
+                tr!("Borrar {d} días después de subirla", d)
             }
         };
-        egui::ComboBox::from_label("Copia local").selected_text(label(days)).show_ui(ui, |ui| {
+        egui::ComboBox::from_label(t("Copia local")).selected_text(label(days)).show_ui(ui, |ui| {
             for d in [0, 7, 30, 90] {
                 ui.selectable_value(&mut days, d, label(d));
             }
@@ -1243,7 +1297,7 @@ impl VroomApp {
         if days != config.keep_local_days {
             self.set_config("keep_local_days", days.to_string());
         }
-        ui.weak("Solo se borran vídeos que ya están en R2; siguen en la biblioteca y se descargan al abrirlos. Si pierdes o te roban el PC, todo lo subido sigue en tu bucket.");
+        ui.weak(t("Solo se borran vídeos que ya están en R2; siguen en la biblioteca y se descargan al abrirlos. Si pierdes o te roban el PC, todo lo subido sigue en tu bucket."));
     }
 
     fn transcription_settings(&mut self, ui: &mut Ui) {
@@ -1251,31 +1305,31 @@ impl VroomApp {
         if ui
             .add_enabled(
                 self.can_transcribe(),
-                egui::Checkbox::new(&mut transcribe, "Transcribir al terminar cada grabación"),
+                egui::Checkbox::new(&mut transcribe, t("Transcribir al terminar cada grabación")),
             )
             .changed()
         {
             self.prefs.transcribe = transcribe;
             self.prefs.save();
         }
-        ui.weak("Los subtítulos se generan en este PC con Whisper: el audio no sale de aquí. Se ven en la página para compartir.");
+        ui.weak(t("Los subtítulos se generan en este PC con Whisper: el audio no sale de aquí. Se ven en la página para compartir."));
         match &self.transcriber.0 {
             Some(m) => {
-                ui.label(format!(
-                    "Modelo: {}",
-                    Path::new(m).file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+                ui.label(tr!(
+                    "Modelo: {name}",
+                    name = Path::new(m).file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
                 ));
             }
             None => {
-                ui.label("No hay ningún modelo todavía.");
+                ui.label(t("No hay ningún modelo todavía."));
             }
         }
         match self.model_download {
             Some(p) => {
-                ui.add(egui::ProgressBar::new(p as f32).text("Descargando modelo…"));
+                ui.add(egui::ProgressBar::new(p as f32).text(t("Descargando modelo…")));
             }
             None if self.transcriber.0.is_none() => {
-                if ui.button("Descargar Whisper large-v3-turbo (574 MB)").clicked() {
+                if ui.button(t("Descargar Whisper large-v3-turbo (574 MB)")).clicked() {
                     self.model_download = Some(0.0);
                     self.spawn(|cli, mail| {
                         let result = cli.stream(&["transcribe", "--download-model"], |e| {
@@ -1286,33 +1340,33 @@ impl VroomApp {
                             }
                         });
                         match result {
-                            Ok(()) => mail.send(Msg::Toast("Modelo de Whisper descargado".into())),
+                            Ok(()) => mail.send(Msg::Toast(t("Modelo de Whisper descargado"))),
                             Err(e) => mail.send(Msg::Error(e)),
                         }
                         mail.send(Msg::ModelDownload(None));
                     });
                 }
-                ui.weak("Modelo abierto de OpenAI, del repositorio de whisper.cpp en Hugging Face; se comprueba su SHA-256 antes de usarlo.");
+                ui.weak(t("Modelo abierto de OpenAI, del repositorio de whisper.cpp en Hugging Face; se comprueba su SHA-256 antes de usarlo."));
             }
             None => {}
         }
         if self.transcriber.1.is_none() {
-            ui.label("Falta whisper.cpp: descarga whisper-bin-x64.zip de github.com/ggml-org/whisper.cpp/releases y deja whisper-cli.exe (con sus .dll) junto a Vroom.exe. También hace falta ffmpeg (winget install Gyan.FFmpeg).");
-            if ui.button("Comprobar de nuevo").clicked() {
+            ui.label(t("Falta whisper.cpp: descarga whisper-bin-x64.zip de github.com/ggml-org/whisper.cpp/releases y deja whisper-cli.exe (con sus .dll) junto a Vroom.exe. También hace falta ffmpeg (winget install Gyan.FFmpeg)."));
+            if ui.button(t("Comprobar de nuevo")).clicked() {
                 self.spawn(load_transcriber);
             }
         }
     }
 
     fn loom_settings(&mut self, ui: &mut Ui) {
-        ui.weak("En loom.com, abre las herramientas de desarrollo › Application › Cookies y copia connect.sid (o toda la cabecera Cookie).");
+        ui.weak(t("En loom.com, abre las herramientas de desarrollo › Application › Cookies y copia connect.sid (o toda la cabecera Cookie)."));
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.loom_cookie).password(true).hint_text("connect.sid"));
             let ready = !self.loom_cookie.trim().is_empty() && !self.loom_running;
-            if ui.add_enabled(ready, egui::Button::new("Ver cuántos hay")).clicked() {
+            if ui.add_enabled(ready, egui::Button::new(t("Ver cuántos hay"))).clicked() {
                 self.loom(vec!["loom", "list"]);
             }
-            if ui.add_enabled(ready, egui::Button::new("Importar todo")).clicked() {
+            if ui.add_enabled(ready, egui::Button::new(t("Importar todo"))).clicked() {
                 self.loom(vec!["loom", "import"]);
             }
             if self.loom_running {
@@ -1340,7 +1394,7 @@ impl VroomApp {
                 _ => {}
             });
             if let Err(e) = result {
-                mail.send(Msg::Loom(format!("Error: {e}")));
+                mail.send(Msg::Loom(tr!("Error: {e}", e)));
             }
             mail.send(Msg::LoomFinished);
         });
@@ -1354,7 +1408,7 @@ fn ok_cancel(ui: &mut Ui, ok: &str, close: &mut bool) -> bool {
         if ui.button(ok).clicked() {
             pressed = true;
         }
-        if ui.button("Cancelar").clicked() {
+        if ui.button(t("Cancelar")).clicked() {
             *close = true;
         }
     });

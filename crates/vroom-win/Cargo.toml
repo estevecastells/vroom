@@ -23,4 +23,9 @@ serde_json.workspace = true
 tray-icon = "0.26.1"
 vroom-core.workspace = true
 windows-capture = "2.0.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+
+# The catalog test (src/lang.rs) runs on every system, so it needs these outside Windows too.
+[dev-dependencies]
+serde_json.workspace = true
+vroom-core.workspace = true

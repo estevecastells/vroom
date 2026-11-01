@@ -12,6 +12,10 @@ mod app;
 mod audio;
 #[cfg(windows)]
 mod cli;
+// Also built for tests elsewhere, so the catalog check runs on every system.
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod lang;
 #[cfg(windows)]
 mod prefs;
 #[cfg(windows)]
@@ -22,6 +26,8 @@ mod tray;
 #[cfg(windows)]
 fn main() -> eframe::Result {
     let hidden = std::env::args().any(|a| a == "--hidden");
+    // Before any window or tray text exists.
+    lang::init(prefs::Prefs::load().language.as_deref());
     let icon = tray::icon_rgba(64);
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

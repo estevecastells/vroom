@@ -2,6 +2,7 @@
 //! with `video.mp4`, `meta.json`, `thumb.jpg` and the local `state.json`.
 //! Anything can be copied, backed up or opened in Finder/Explorer as is.
 
+use crate::i18n::t;
 use crate::layout::{CAPTIONS, META, STATE, THUMB, VIDEO};
 use crate::meta::Meta;
 use serde::{Deserialize, Serialize};
@@ -169,7 +170,7 @@ impl Library {
 
     pub fn dir(&self, id: &str) -> Result<PathBuf, String> {
         if !crate::id::is_valid(id) {
-            return Err(format!("id no válido: {id}"));
+            return Err(crate::tr!("id no válido: {id}", id));
         }
         Ok(self.root.join(id))
     }
@@ -177,7 +178,7 @@ impl Library {
     fn existing_dir(&self, id: &str) -> Result<PathBuf, String> {
         let dir = self.dir(id)?;
         if !dir.join(META).is_file() {
-            return Err(format!("no existe la grabación {id}"));
+            return Err(crate::tr!("no existe la grabación {id}", id));
         }
         Ok(dir)
     }
@@ -201,7 +202,7 @@ impl Library {
         meta.duration_secs = duration_secs;
         meta.width = width;
         meta.height = height;
-        meta.size_bytes = file_size(&dir.join(VIDEO)).ok_or("no se encontró el vídeo")?;
+        meta.size_bytes = file_size(&dir.join(VIDEO)).ok_or_else(|| t("no se encontró el vídeo"))?;
         self.write_meta(&meta)?;
         let _ = std::fs::remove_file(dir.join(RECORDING_MARKER));
         self.entry(id)
@@ -257,7 +258,7 @@ impl Library {
     pub fn rename(&self, id: &str, title: &str) -> Result<Entry, String> {
         let title = title.trim();
         if title.is_empty() {
-            return Err("el título no puede estar vacío".into());
+            return Err(t("el título no puede estar vacío"));
         }
         let mut meta = self.meta(id)?;
         meta.title = title.to_string();
@@ -300,7 +301,7 @@ impl Library {
     }
 
     pub fn create_folder(&self, path: &str) -> Result<String, String> {
-        let path = crate::meta::normalize_folder(path).ok_or("el nombre de la carpeta está vacío")?;
+        let path = crate::meta::normalize_folder(path).ok_or_else(|| t("el nombre de la carpeta está vacío"))?;
         let mut folders = self.saved_folders();
         folders.push(path.clone());
         self.save_folders(folders)?;
@@ -316,10 +317,10 @@ impl Library {
 
     /// Rename or move a folder with its subfolders and recordings.
     pub fn rename_folder(&self, from: &str, to: &str) -> Result<String, String> {
-        let from = crate::meta::normalize_folder(from).ok_or("falta la carpeta")?;
-        let to = crate::meta::normalize_folder(to).ok_or("el nombre nuevo está vacío")?;
+        let from = crate::meta::normalize_folder(from).ok_or_else(|| t("falta la carpeta"))?;
+        let to = crate::meta::normalize_folder(to).ok_or_else(|| t("el nombre nuevo está vacío"))?;
         if is_within(&to, &from) && to != from {
-            return Err("no se puede mover una carpeta dentro de sí misma".into());
+            return Err(t("no se puede mover una carpeta dentro de sí misma"));
         }
         let moved = |f: &str| if is_within(f, &from) { format!("{to}{}", &f[from.len()..]) } else { f.to_string() };
         let folders: Vec<String> = self.saved_folders().iter().map(|f| moved(f)).chain([to.clone()]).collect();
@@ -334,7 +335,7 @@ impl Library {
 
     /// Delete a folder and its subfolders; their recordings go to the deleted folder's parent.
     pub fn delete_folder(&self, path: &str) -> Result<(), String> {
-        let path = crate::meta::normalize_folder(path).ok_or("falta la carpeta")?;
+        let path = crate::meta::normalize_folder(path).ok_or_else(|| t("falta la carpeta"))?;
         let parent = path.rsplit_once('/').map(|(p, _)| p.to_string());
         self.save_folders(self.saved_folders().into_iter().filter(|f| !is_within(f, &path)).collect())?;
         for e in self.list()? {
@@ -365,7 +366,7 @@ impl Library {
     pub fn remove_local_video(&self, id: &str) -> Result<Entry, String> {
         let dir = self.existing_dir(id)?;
         if self.state(id).uploaded_at.is_none() {
-            return Err("esta grabación aún no está en la nube; no se borra la única copia".into());
+            return Err(t("esta grabación aún no está en la nube; no se borra la única copia"));
         }
         match std::fs::remove_file(dir.join(VIDEO)) {
             Ok(()) => {}
@@ -524,6 +525,7 @@ mod tests {
 
     #[test]
     fn record_finalize_upload_free() {
+        crate::i18n::set_lang("es");
         let (_d, lib) = lib();
         let e = lib.create(None, NOW, 0).unwrap();
         assert_eq!(e.status, Status::Recording);

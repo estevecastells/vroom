@@ -61,10 +61,10 @@ public enum RecorderError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .noDisplay: "No se encuentra la pantalla seleccionada."
-        case .noWindow: "La ventana elegida ya no está abierta."
-        case let .writer(m): "No se pudo escribir el vídeo: \(m)"
-        case .noFrames: "No llegó ninguna imagen de la pantalla. Revisa el permiso de Grabación de pantalla."
+        case .noDisplay: String(localized: "No se encuentra la pantalla seleccionada.")
+        case .noWindow: String(localized: "La ventana elegida ya no está abierta.")
+        case let .writer(m): String(localized: "No se pudo escribir el vídeo: \(m)")
+        case .noFrames: String(localized: "No llegó ninguna imagen de la pantalla. Revisa el permiso de Grabación de pantalla.")
         }
     }
 }
@@ -214,7 +214,7 @@ public final class Recorder: NSObject, @unchecked Sendable {
                     if writer.status == .completed {
                         cont.resume(returning: result)
                     } else {
-                        cont.resume(throwing: RecorderError.writer(writer.error?.localizedDescription ?? "desconocido"))
+                        cont.resume(throwing: RecorderError.writer(writer.error?.localizedDescription ?? String(localized: "desconocido")))
                     }
                 }
             }
@@ -274,7 +274,7 @@ public final class Recorder: NSObject, @unchecked Sendable {
             ],
         ])
         video.expectsMediaDataInRealTime = true
-        guard writer.canAdd(video) else { throw RecorderError.writer("vídeo no admitido") }
+        guard writer.canAdd(video) else { throw RecorderError.writer(String(localized: "vídeo no admitido")) }
         writer.add(video)
         videoInput = video
 
@@ -306,7 +306,7 @@ public final class Recorder: NSObject, @unchecked Sendable {
             }
         }
         guard writer.startWriting() else {
-            throw RecorderError.writer(writer.error?.localizedDescription ?? "no se pudo empezar")
+            throw RecorderError.writer(writer.error?.localizedDescription ?? String(localized: "no se pudo empezar"))
         }
         self.writer = writer
     }
@@ -330,7 +330,7 @@ public final class Recorder: NSObject, @unchecked Sendable {
     private func append(_ buffer: CMSampleBuffer, to input: AVAssetWriterInput?, isVideo: Bool) {
         guard let input, let writer, writer.status == .writing else {
             if let writer, writer.status == .failed, failure == nil {
-                failure = RecorderError.writer(writer.error?.localizedDescription ?? "desconocido")
+                failure = RecorderError.writer(writer.error?.localizedDescription ?? String(localized: "desconocido"))
             }
             return
         }

@@ -1,0 +1,3 @@
+/* Permission prompts shown by macOS (Info.plist keys). */
+"NSCameraUsageDescription" = "Vroom muestra tu cámara en una burbuja dentro de la grabación.";
+"NSMicrophoneUsageDescription" = "Vroom graba tu voz junto con la pantalla.";

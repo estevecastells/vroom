@@ -66,7 +66,21 @@ pub enum Event {
     },
     Error {
         message: String,
+        /// Set for failures the apps handle on their own (`error_code`); the
+        /// message is translated, the code never is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
+}
+
+/// Values of `Event::Error::code`.
+pub mod error_code {
+    /// Another vroom process holds the library (a sync or a Loom import).
+    pub const BUSY: &str = "busy";
+    /// Some items failed; each was reported as a `warning` already.
+    pub const PARTIAL: &str = "partial";
+    /// No R2 bucket is connected.
+    pub const NO_CLOUD: &str = "no_cloud";
 }
 
 impl Event {

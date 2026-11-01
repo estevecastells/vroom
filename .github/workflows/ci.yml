@@ -70,5 +70,7 @@ jobs:
       - name: Protocol checks
         working-directory: app
         run: swift run -c debug KitChecks
+      - name: Translation checks
+        run: swift scripts/check-strings.swift
       - name: Build the app bundle
         run: scripts/build-app.sh

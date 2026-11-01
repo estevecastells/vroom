@@ -1,0 +1,5 @@
+{
+  "type": "error",
+  "message": "a sync is already running",
+  "code": "busy"
+}

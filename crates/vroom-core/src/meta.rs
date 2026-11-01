@@ -1,6 +1,7 @@
 //! `meta.json`: what a recording is. The same file lives next to the video on
 //! disk and in the bucket, so a new computer can rebuild the library from R2.
 
+use crate::i18n::{fill, t_in};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -56,16 +57,27 @@ impl Meta {
     }
 }
 
-/// "Grabación 1 nov 2026, 14:32" in local time when the offset is known.
+/// "Grabación 1 nov 2026, 14:32" in local time when the offset is known, in the current language.
 pub fn default_title(at: OffsetDateTime) -> String {
-    const MONTHS: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
-    format!(
-        "Grabación {} {} {}, {:02}:{:02}",
-        at.day(),
-        MONTHS[at.month() as usize - 1],
-        at.year(),
-        at.hour(),
-        at.minute()
+    default_title_in(&crate::i18n::lang(), at)
+}
+
+/// The default title in a given language: "Recording Nov 1, 2026, 14:32" in English.
+pub fn default_title_in(lang: &str, at: OffsetDateTime) -> String {
+    let months = |lang| t_in(lang, "ene feb mar abr may jun jul ago sep oct nov dic");
+    let mut names = months(lang);
+    if names.split_whitespace().count() != 12 {
+        names = months(crate::i18n::SOURCE);
+    }
+    let month = names.split_whitespace().nth(at.month() as usize - 1).unwrap_or_default().to_string();
+    fill(
+        &t_in(lang, "Grabación {day} {month} {year}, {time}"),
+        &[
+            ("day", at.day().to_string()),
+            ("month", month),
+            ("year", at.year().to_string()),
+            ("time", format!("{:02}:{:02}", at.hour(), at.minute())),
+        ],
     )
 }
 
@@ -87,8 +99,11 @@ mod tests {
     }
 
     #[test]
-    fn title_in_spanish() {
-        assert_eq!(default_title(datetime!(2026-11-01 14:32 +01:00)), "Grabación 1 nov 2026, 14:32");
+    fn titles_in_spanish_and_english() {
+        let at = datetime!(2026-11-01 14:32 +01:00);
+        assert_eq!(default_title_in("es", at), "Grabación 1 nov 2026, 14:32");
+        assert_eq!(default_title_in("en", at), "Recording Nov 1, 2026, 14:32");
+        assert_eq!(default_title_in("en", datetime!(2026-05-09 08:05 UTC)), "Recording May 9, 2026, 08:05");
     }
 
     #[test]

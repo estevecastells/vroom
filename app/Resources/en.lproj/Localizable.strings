@@ -1,0 +1,221 @@
+/*
+  English strings of the macOS app.
+
+  The keys are the Spanish text written in the Swift sources, so es.lproj needs no entries.
+  Interpolations become placeholders in the key: text → %@, whole numbers → %lld, and a
+  literal % in a key with placeholders becomes %%.
+
+  To add a language, copy this folder to <code>.lproj (fr.lproj, pt-BR.lproj…), translate
+  the values and keep the keys and placeholders as they are. Translate InfoPlist.strings too
+  (the camera and microphone permission prompts). The build ships every .lproj in
+  app/Resources, and the language appears in Settings by its own name.
+
+  Check with `swift scripts/check-strings.swift` (also run by `make test`): it lists any key
+  a translation is missing, since a missing key would show the Spanish text.
+*/
+
+/* Windows */
+"Biblioteca de Vroom" = "Vroom Library";
+"Ajustes de Vroom" = "Vroom Settings";
+
+/* Menu bar */
+"Subiendo…" = "Uploading…";
+"Conecta Cloudflare R2 para guardar copia en la nube" = "Connect Cloudflare R2 to keep a copy in the cloud";
+"Biblioteca" = "Library";
+"Ajustes…" = "Settings…";
+"Salir" = "Quit";
+"Falta el permiso de Grabación de pantalla y audio del sistema" = "Screen & System Audio Recording permission is missing";
+"Actívalo para Vroom en Ajustes del Sistema y luego reabre la app: macOS solo lo aplica al reiniciarla." = "Turn it on for Vroom in System Settings, then reopen the app: macOS only applies it after a restart.";
+"Abrir Ajustes del Sistema" = "Open System Settings";
+"Reabrir Vroom" = "Reopen Vroom";
+"Grabar" = "Record";
+"Cancelar" = "Cancel";
+"Terminar" = "Stop";
+"Guardando…" = "Saving…";
+"Qué grabar" = "What to record";
+"Pantalla" = "Screen";
+"Ventana" = "Window";
+"Área" = "Area";
+"Pantalla bajo el ratón" = "Screen under the pointer";
+"Al pulsar Grabar, haz clic en la ventana que quieras." = "After you press Record, click the window you want.";
+"Al pulsar Grabar, arrastra para elegir el área." = "After you press Record, drag to choose the area.";
+"Sin cámara" = "No camera";
+"Sin micrófono" = "No microphone";
+"Audio del sistema" = "System audio";
+"Graba lo que suena en el Mac (llamadas, vídeos, otras apps), sin los sonidos de Vroom" = "Records what plays on the Mac (calls, videos, other apps), without Vroom's own sounds";
+"Aún no hay grabaciones." = "No recordings yet.";
+"Copiar enlace" = "Copy link";
+
+/* Recording status */
+"Grabando" = "Recording";
+"Solo en este Mac" = "Only on this Mac";
+"Solo en este Mac. Último error: %@" = "Only on this Mac. Last error: %@";
+"Subiendo a R2" = "Uploading to R2";
+"Subiendo a R2. Último error: %@" = "Uploading to R2. Last error: %@";
+"En este Mac y en R2" = "On this Mac and in R2";
+"Solo en R2" = "Only in R2";
+
+/* While recording */
+"Terminar y guardar (⌥⇧R)" = "Stop and save (⌥⇧R)";
+"Pausar" = "Pause";
+"Continuar" = "Resume";
+"Descartar la grabación" = "Discard the recording";
+"Haz clic en la ventana que quieres grabar · Esc para cancelar" = "Click the window you want to record · Esc to cancel";
+"Arrastra para elegir el área que quieres grabar · Esc para cancelar" = "Drag to choose the area you want to record · Esc to cancel";
+
+/* Messages */
+"Vroom necesita permiso de Grabación de pantalla: actívalo en Ajustes del Sistema › Privacidad y seguridad y vuelve a abrir la app." = "Vroom needs the Screen Recording permission: turn it on in System Settings › Privacy & Security and reopen the app.";
+"Sin permiso para el micrófono: se graba sin audio" = "No microphone permission: recording without audio";
+"Sin permiso para la cámara" = "No camera permission";
+"La grabación se detuvo: %@" = "The recording stopped: %@";
+"macOS no ha dejado empezar la grabación. Revisa en Ajustes del Sistema › Privacidad y seguridad › Grabación de pantalla y audio del sistema que Vroom esté activado, y reabre Vroom." = "macOS didn't let the recording start. Check that Vroom is turned on in System Settings › Privacy & Security › Screen & System Audio Recording, then reopen Vroom.";
+"Grabación guardada" = "Recording saved";
+"Enlace copiado; se está subiendo" = "Link copied; uploading now";
+"Enlace copiado (caduca el %@)" = "Link copied (expires %@)";
+"Enlace copiado" = "Link copied";
+"Enlace copiado; funcionará al terminar la subida" = "Link copied; it will work once the upload finishes";
+"Copia local borrada; sigue en R2" = "Local copy deleted; it's still in R2";
+"Grabación eliminada" = "Recording deleted";
+"Transcripción: %@" = "Transcription: %@";
+"Modelo de Whisper descargado" = "Whisper model downloaded";
+"Hecho" = "Done";
+"No se pudo cambiar el inicio de sesión: %@" = "Couldn't change the login item: %@";
+
+/* Library */
+"Todas" = "All";
+"Sin carpeta" = "No folder";
+"Carpetas" = "Folders";
+"Nueva carpeta" = "New folder";
+"Nueva carpeta dentro de «%@»" = "New folder in “%@”";
+"Nueva subcarpeta…" = "New subfolder…";
+"Renombrar" = "Rename";
+"Renombrar…" = "Rename…";
+"Renombrar «%@»" = "Rename “%@”";
+"Eliminar carpeta…" = "Delete folder…";
+"Eliminar carpeta" = "Delete folder";
+"¿Eliminar la carpeta «%@»?" = "Delete the folder “%@”?";
+"Las grabaciones no se borran: pasan a la carpeta de arriba." = "The recordings aren't deleted: they move to the folder above.";
+"Nombre" = "Name";
+"Crear" = "Create";
+"Sin grabaciones" = "No recordings";
+"Pulsa ⌥⇧R o el botón Grabar para empezar." = "Press ⌥⇧R or the Record button to start.";
+"Buscar" = "Search";
+"Sincronizar" = "Sync";
+"Sube lo pendiente ahora" = "Upload everything pending now";
+"Título" = "Title";
+"Guardar" = "Save";
+"Mover a carpeta" = "Move to folder";
+"Mover a carpeta…" = "Move to folder…";
+"Carpeta (usa / para subcarpetas)" = "Folder (use / for subfolders)";
+"Déjalo vacío para sacarla de cualquier carpeta." = "Leave it empty to take it out of any folder.";
+"Mover" = "Move";
+"¿Eliminar «%@»?" = "Delete “%@”?";
+"Eliminar de este Mac y de R2" = "Delete from this Mac and R2";
+"Eliminar solo de este Mac" = "Delete only from this Mac";
+"Eliminar" = "Delete";
+"Eliminar…" = "Delete…";
+"Los enlaces compartidos dejarán de funcionar si la borras de R2." = "Shared links will stop working if you delete it from R2.";
+"Es la única copia: no está en la nube." = "This is the only copy: it isn't in the cloud.";
+"Reproducir" = "Play";
+"Mostrar en Finder" = "Show in Finder";
+"Transcribir" = "Transcribe";
+"Volver a transcribir" = "Transcribe again";
+"Subir ahora" = "Upload now";
+"Liberar espacio en este Mac" = "Free up space on this Mac";
+"Descargar a este Mac" = "Download to this Mac";
+"Transcribiendo %lld %%" = "Transcribing %lld%%";
+"Transcripción en cola" = "Transcription queued";
+"Con subtítulos" = "Has subtitles";
+
+/* Settings: tabs */
+"Grabación" = "Recording";
+"Transcripción" = "Transcription";
+"Importar de Loom" = "Import from Loom";
+
+/* Settings: recording */
+"Idioma" = "Language";
+"Automático" = "Automatic";
+"El nuevo idioma se aplica al reabrir Vroom." = "The new language applies when you reopen Vroom.";
+"Resolución" = "Resolution";
+"Nativa (Retina)" = "Native (Retina)";
+"Fotogramas" = "Frame rate";
+"Códec" = "Codec";
+"H.264 (se ve en cualquier navegador)" = "H.264 (plays in any browser)";
+"HEVC (archivos ~40 % más pequeños)" = "HEVC (~40% smaller files)";
+"Cuenta atrás de 3 segundos" = "3-second countdown";
+"Abrir al iniciar sesión" = "Open at login";
+"⌥⇧R empieza y termina una grabación desde cualquier app. La cámara aparece como una burbuja que puedes arrastrar; la barra de control no sale en el vídeo." = "⌥⇧R starts and stops a recording from any app. The camera shows as a bubble you can drag; the control bar doesn't appear in the video.";
+
+/* Settings: Cloudflare R2 */
+"Account ID" = "Account ID";
+"32 caracteres, en el panel de R2" = "32 characters, in the R2 dashboard";
+"Bucket" = "Bucket";
+"Access Key ID" = "Access Key ID";
+"Secret Access Key" = "Secret Access Key";
+"guardado en el llavero" = "saved in the keychain";
+"URL pública (opcional)" = "Public URL (optional)";
+"https://videos.tudominio.com" = "https://videos.yourdomain.com";
+"Prefijo (opcional)" = "Prefix (optional)";
+"p. ej. esteve/" = "e.g. esteve/";
+"Conexión" = "Connection";
+"Crea el bucket y un token de API de R2 con permiso «Object Read & Write» en Cloudflare › R2 › Manage API tokens. Con una URL pública (dominio propio o r2.dev) los enlaces no caducan y abren una página con el vídeo; sin ella son enlaces firmados de 7 días. El secret se guarda en el llavero de macOS." = "Create the bucket and an R2 API token with “Object Read & Write” permission in Cloudflare › R2 › Manage API tokens. With a public URL (your own domain or r2.dev) links never expire and open a page with the video; without one they are signed links that last 7 days. The secret is stored in the macOS keychain.";
+"Desconectar" = "Disconnect";
+"Comprobando…" = "Checking…";
+"Conectar" = "Connect";
+"Conectado: R2 responde y las credenciales funcionan." = "Connected: R2 answers and the credentials work.";
+"¿Ordenador nuevo? Recupera la lista de grabaciones desde R2; los vídeos se descargan cuando los abras." = "New computer? Bring back the list of recordings from R2; videos download when you open them.";
+"Restaurar desde R2" = "Restore from R2";
+
+/* Settings: transcription */
+"Transcribir al terminar cada grabación" = "Transcribe each recording when it ends";
+"Los subtítulos se generan en este Mac con Whisper: el audio no sale de aquí. Se ven en la página para compartir y puedes rehacerlos desde la biblioteca (clic derecho → Transcribir)." = "Subtitles are made on this Mac with Whisper: the audio never leaves it. They show on the share page, and you can redo them from the library (right-click → Transcribe).";
+"Modelo" = "Model";
+"En uso" = "In use";
+"Es el modelo de MacWhisper; Vroom lo usa sin copiarlo." = "This is MacWhisper's model; Vroom uses it without copying it.";
+"No hay ningún modelo todavía." = "No model yet.";
+"Descargando modelo…" = "Downloading model…";
+"Descargar Whisper large-v3-turbo (574 MB)" = "Download Whisper large-v3-turbo (574 MB)";
+"Modelo abierto de OpenAI, del repositorio de whisper.cpp en Hugging Face. Se comprueba su huella SHA-256 antes de usarlo; es más rápido que el de MacWhisper con la misma calidad." = "An open model from OpenAI, from the whisper.cpp repository on Hugging Face. Its SHA-256 checksum is verified before use; it's faster than MacWhisper's with the same quality.";
+"Programa" = "Program";
+"Falta whisper.cpp. Instálalo desde Terminal:" = "whisper.cpp is missing. Install it from Terminal:";
+"Comprobar de nuevo" = "Check again";
+
+/* Settings: library */
+"Carpeta" = "Folder";
+"Cambiar…" = "Change…";
+"Abrir" = "Open";
+"Subir a R2 al terminar cada grabación" = "Upload to R2 when each recording ends";
+"Copia local" = "Local copy";
+"Conservar siempre" = "Always keep";
+"Borrar 7 días después de subirla" = "Delete 7 days after upload";
+"Borrar 30 días después de subirla" = "Delete 30 days after upload";
+"Borrar 90 días después de subirla" = "Delete 90 days after upload";
+"Solo se borran vídeos que ya están en R2; siguen en la biblioteca y se descargan al abrirlos. Si pierdes o te roban el Mac, todo lo subido sigue en tu bucket." = "Only videos already in R2 are deleted; they stay in the library and download when you open them. If your Mac is lost or stolen, everything uploaded is still in your bucket.";
+"Usar esta carpeta" = "Use this folder";
+
+/* Settings: Loom import */
+"Loom no ofrece exportación masiva ni API pública de descargas. Vroom usa la sesión de tu navegador para listar tus vídeos (también los de carpetas), los descarga con sus subtítulos y los sube a R2. Si lo interrumpes, al volver a lanzarlo sigue donde lo dejó." = "Loom has no bulk export or public download API. Vroom uses your browser session to list your videos (including those in folders), downloads them with their subtitles and uploads them to R2. If you stop it, running it again picks up where it left off.";
+"1. Entra en loom.com con tu cuenta y abre tu biblioteca.\n2. Abre las herramientas de desarrollo (⌥⌘I) › Network, recarga y haz clic en cualquier petición a «graphql».\n3. En Request Headers, copia el valor completo de «cookie» y pégalo aquí (también vale solo el valor de connect.sid)." = "1. Sign in to loom.com and open your library.\n2. Open the developer tools (⌥⌘I) › Network, reload and click any request to “graphql”.\n3. Under Request Headers, copy the whole value of “cookie” and paste it here (the connect.sid value alone also works).";
+"Cookie de loom.com" = "loom.com cookie";
+"Sin R2 conectado se importa solo a este Mac." = "Without R2 connected, videos are imported to this Mac only.";
+"Detener" = "Stop";
+"Ver cuántos hay" = "Count videos";
+"Importar todo" = "Import all";
+"Detenido." = "Stopped.";
+"Error: %@" = "Error: %@";
+"↑ subido: %@" = "↑ uploaded: %@";
+"✓ importado: %@" = "✓ imported: %@";
+
+/* Capture and CLI errors */
+"No se encuentra la pantalla seleccionada." = "The selected screen can't be found.";
+"La ventana elegida ya no está abierta." = "The chosen window is no longer open.";
+"No se pudo escribir el vídeo: %@" = "Couldn't write the video: %@";
+"No llegó ninguna imagen de la pantalla. Revisa el permiso de Grabación de pantalla." = "No image came from the screen. Check the Screen Recording permission.";
+"lectura" = "read error";
+"escritura" = "write error";
+"desconocido" = "unknown error";
+"vídeo no admitido" = "video not supported";
+"no se pudo empezar" = "couldn't start";
+"No se encuentra el programa vroom dentro de la app." = "The vroom program can't be found inside the app.";
+"Respuesta inesperada de vroom: %@" = "Unexpected response from vroom: %@";
+"vroom terminó con código %lld" = "vroom exited with code %lld";

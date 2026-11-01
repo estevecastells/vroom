@@ -106,7 +106,7 @@ final class Countdown {
 private struct CountdownView: View {
     let number: Int
     var body: some View {
-        Text("\(number)")
+        Text(verbatim: String(number))
             .font(.system(size: 84, weight: .semibold, design: .rounded))
             .foregroundStyle(.white)
             .frame(width: 160, height: 160)
@@ -152,7 +152,7 @@ private struct ControlBarView: View {
                 Button { pausedAt == nil ? model.pauseRecording() : model.resumeRecording() } label: {
                     Image(systemName: pausedAt == nil ? "pause.fill" : "play.fill")
                 }
-                .help(pausedAt == nil ? "Pausar" : "Continuar")
+                .help(pausedAt == nil ? LocalizedStringKey("Pausar") : LocalizedStringKey("Continuar"))
             } else {
                 ProgressView().controlSize(.small).frame(width: 64)
             }

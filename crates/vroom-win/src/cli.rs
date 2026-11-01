@@ -6,8 +6,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use vroom_core::i18n::t;
 use vroom_core::library::Entry;
 use vroom_core::protocol::Event;
+use vroom_core::tr;
 
 /// No console window flashing up for each command.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -31,6 +33,8 @@ impl Cli {
     fn command(&self, args: &[&str], envs: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(&self.exe);
         cmd.arg("--json").args(args).creation_flags(CREATE_NO_WINDOW);
+        // Messages and errors come back in the app's language.
+        cmd.env("VROOM_LANG", vroom_core::i18n::lang());
         for (k, v) in envs {
             cmd.env(k, v);
         }
@@ -58,15 +62,27 @@ impl Cli {
         args: &[&str],
         stdin: Option<&str>,
         envs: &[(&str, &str)],
-        mut on_event: impl FnMut(Event),
+        on_event: impl FnMut(Event),
     ) -> Result<(), String> {
+        self.stream_coded(args, stdin, envs, on_event).map_err(|(message, _)| message)
+    }
+
+    /// Like `stream_with`, with the error's `code` (`vroom_core::protocol::error_code`),
+    /// for the failures the app handles instead of showing.
+    pub fn stream_coded(
+        &self,
+        args: &[&str],
+        stdin: Option<&str>,
+        envs: &[(&str, &str)],
+        mut on_event: impl FnMut(Event),
+    ) -> Result<(), (String, Option<String>)> {
         let mut child = self
             .command(args, envs)
             .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("no se pudo abrir vroom.exe: {e}"))?;
+            .map_err(|e| (tr!("no se pudo abrir vroom.exe: {e}", e), None))?;
         if let Some(text) = stdin {
             let mut pipe = child.stdin.take().expect("piped");
             let _ = writeln!(pipe, "{text}");
@@ -74,18 +90,20 @@ impl Cli {
         let mut error = None;
         for line in BufReader::new(child.stdout.take().expect("piped")).lines().map_while(Result::ok) {
             match serde_json::from_str::<Event>(&line) {
-                Ok(Event::Error { message }) => error = Some(message),
+                Ok(Event::Error { message, code }) => error = Some((message, code)),
                 Ok(event) => on_event(event),
                 Err(_) => {}
             }
         }
-        let output = child.wait_with_output().map_err(|e| e.to_string())?;
-        if let Some(message) = error {
-            return Err(message);
+        let output = child.wait_with_output().map_err(|e| (e.to_string(), None))?;
+        if let Some(error) = error {
+            return Err(error);
         }
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if stderr.is_empty() { format!("vroom.exe terminó con {}", output.status) } else { stderr });
+            let message =
+                if stderr.is_empty() { tr!("vroom.exe terminó con {status}", status = output.status) } else { stderr };
+            return Err((message, None));
         }
         Ok(())
     }
@@ -97,7 +115,7 @@ impl Cli {
                 Event::Entries { entries } => Some(entries),
                 _ => None,
             })
-            .ok_or_else(|| "respuesta inesperada de vroom list".into())
+            .ok_or_else(|| t("respuesta inesperada de vroom list"))
     }
 
     pub fn entry(&self, args: &[&str]) -> Result<Entry, String> {
@@ -107,7 +125,7 @@ impl Cli {
                 Event::Entry { entry } => Some(entry),
                 _ => None,
             })
-            .ok_or_else(|| "respuesta inesperada de vroom".into())
+            .ok_or_else(|| t("respuesta inesperada de vroom"))
     }
 
     pub fn folders(&self, args: &[&str]) -> Result<Vec<String>, String> {
@@ -117,7 +135,7 @@ impl Cli {
                 Event::Folders { folders } => Some(folders),
                 _ => None,
             })
-            .ok_or_else(|| "respuesta inesperada de vroom folders".into())
+            .ok_or_else(|| t("respuesta inesperada de vroom folders"))
     }
 
     pub fn link(&self, args: &[&str]) -> Result<String, String> {
@@ -127,6 +145,6 @@ impl Cli {
                 Event::Link { url, .. } => Some(url),
                 _ => None,
             })
-            .ok_or_else(|| "respuesta inesperada de vroom share".into())
+            .ok_or_else(|| t("respuesta inesperada de vroom share"))
     }
 }

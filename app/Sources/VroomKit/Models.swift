@@ -87,11 +87,11 @@ public enum Event: Decodable, Equatable, Sendable {
     case link(id: String, url: String, expiresAt: Date?)
     case warning(id: String?, message: String)
     case ok(String)
-    case error(String)
+    case error(String, code: String?)
 
     private enum Keys: String, CodingKey {
         case type, version, `protocol`, entries, entry, folders, config, path, library, hasSecret, id, done, total, what, url,
-            expiresAt, message, model, whisper
+            expiresAt, message, code, model, whisper
     }
 
     public init(from decoder: Decoder) throws {
@@ -123,7 +123,7 @@ public enum Event: Decodable, Equatable, Sendable {
         case "warning":
             self = .warning(id: try c.decodeIfPresent(String.self, forKey: .id), message: try c.decode(String.self, forKey: .message))
         case "ok": self = .ok(try c.decode(String.self, forKey: .message))
-        case "error": self = .error(try c.decode(String.self, forKey: .message))
+        case "error": self = .error(try c.decode(String.self, forKey: .message), code: try c.decodeIfPresent(String.self, forKey: .code))
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown event \(other)")
         }

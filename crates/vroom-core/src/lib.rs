@@ -3,6 +3,7 @@
 //! No network and no capture here; the apps record, `vroom-cloud` uploads.
 
 pub mod config;
+pub mod i18n;
 pub mod id;
 pub mod layout;
 pub mod library;

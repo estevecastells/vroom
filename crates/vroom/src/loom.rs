@@ -21,9 +21,10 @@ use ureq::http::Uri;
 use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
 use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 use vroom_cloud::sync;
+use vroom_core::i18n::t;
 use vroom_core::layout::{CAPTIONS, THUMB, VIDEO};
 use vroom_core::library::mark_in_progress;
-use vroom_core::{Meta, Source};
+use vroom_core::{tr, Meta, Source};
 
 const GRAPHQL: &str = "https://www.loom.com/graphql";
 /// Loom documents no rate limit; the archivers pause like this between calls.
@@ -130,7 +131,11 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
             let date = v.created_at.map(|d| d.date().to_string()).unwrap_or_default();
             out.ok(format!("{}  {date}  {:>8}  {}", v.id, vroom_core::share::format_duration(v.duration_secs), v.name));
         }
-        out.ok(format!("{} vídeos en Loom, {} en total", videos.len(), vroom_core::share::format_duration(total)));
+        out.ok(tr!(
+            "{n} vídeos en Loom, {duration} en total",
+            n = videos.len(),
+            duration = vroom_core::share::format_duration(total)
+        ));
         return Ok(());
     }
 
@@ -138,10 +143,10 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
     let r2 = if no_upload {
         None
     } else {
-        Some(ctx.r2().map_err(|e| format!("{e} (o usa --no-upload para importar solo en local)"))?)
+        Some(ctx.r2().map_err(|e| tr!("{e} (o usa --no-upload para importar solo en local)", e))?)
     };
     if free_local && r2.is_none() {
-        return Err("--free-local necesita subir a R2".into());
+        return Err(t("--free-local necesita subir a R2"));
     }
     // An import stopped halfway left folders without a video: drop them, so
     // those videos are imported again rather than counted as done.
@@ -197,7 +202,7 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
                             match sync::upload(r2, &ctx.lib, id, |d, t| out.progress(id, d, t)) {
                                 Ok(()) => out.done(id, "uploaded"),
                                 Err(e) => {
-                                    out.warning(Some(id), &format!("subida: {e}"));
+                                    out.warning(Some(id), &tr!("subida: {e}", e));
                                     continue;
                                 }
                             }
@@ -214,11 +219,16 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
     });
     let (imported, skipped) = (imported.into_inner(), skipped.into_inner());
     let failed = failed.into_inner().unwrap_or_else(|e| e.into_inner());
-    out.ok(format!("Loom: {imported} importados, {skipped} ya estaban, {} fallaron", failed.len()));
+    out.ok(tr!(
+        "Loom: {imported} importados, {skipped} ya estaban, {failed} fallaron",
+        imported = imported,
+        skipped = skipped,
+        failed = failed.len()
+    ));
     if !failed.is_empty() {
-        return Err(format!(
-            "no se pudieron importar: {}. Vuelve a lanzar la importación para reintentarlos",
-            failed.join(", ")
+        return Err(tr!(
+            "no se pudieron importar: {names}. Vuelve a lanzar la importación para reintentarlos",
+            names = failed.join(", ")
         ));
     }
     Ok(())
@@ -227,7 +237,7 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
 fn import_one(out: &Out, ctx: &Ctx, loom: &Loom, v: &Video, id: &str) -> Result<(), String> {
     let mut meta = Meta::new(
         id.to_string(),
-        if v.name.trim().is_empty() { "Loom sin título".into() } else { v.name.clone() },
+        if v.name.trim().is_empty() { t("Loom sin título") } else { v.name.clone() },
         v.created_at.unwrap_or_else(OffsetDateTime::now_utc),
     );
     meta.source = Source::Loom;
@@ -277,7 +287,7 @@ impl Loom {
     fn new(cookie: &str) -> Result<Loom, String> {
         let cookie = cookie.trim().trim_start_matches("Cookie:").trim();
         if cookie.is_empty() {
-            return Err("falta la cookie de loom.com".into());
+            return Err(t("falta la cookie de loom.com"));
         }
         // A whole Cookie header (name=value; …) as copied from the browser, or just
         // the value of connect.sid.
@@ -319,7 +329,7 @@ impl Loom {
             let mut resp = match resp {
                 Ok(r) => r,
                 Err(e) => {
-                    last = format!("sin conexión con Loom: {e}");
+                    last = tr!("sin conexión con Loom: {e}", e);
                     continue;
                 }
             };
@@ -328,10 +338,11 @@ impl Loom {
                 return Err(expired());
             }
             if status == 429 || status >= 500 {
-                last = format!("Loom respondió {status}");
+                last = tr!("Loom respondió {status}", status);
                 continue;
             }
-            let v: Value = resp.body_mut().read_json().map_err(|e| format!("respuesta de Loom ({status}): {e}"))?;
+            let v: Value =
+                resp.body_mut().read_json().map_err(|e| tr!("respuesta de Loom ({status}): {e}", status, e))?;
             if let Some(errors) = v.get("errors").and_then(Value::as_array) {
                 if errors
                     .iter()
@@ -344,7 +355,7 @@ impl Loom {
                     return Err(format!("Loom ({op}): {}", msgs.join("; ")));
                 }
             }
-            return v.get("data").cloned().ok_or_else(|| format!("Loom ({op}) no devolvió datos"));
+            return v.get("data").cloned().ok_or_else(|| tr!("Loom ({op}) no devolvió datos", op));
         }
         Err(last)
     }
@@ -370,7 +381,10 @@ impl Loom {
                     if let Some(id) = edge["node"]["id"].as_str() {
                         if !found.iter().any(|(f, _)| f == id) {
                             // A slash inside a name would read as a subfolder.
-                            let name = edge["node"]["name"].as_str().unwrap_or("Sin nombre").replace('/', "-");
+                            let name = edge["node"]["name"]
+                                .as_str()
+                                .map_or_else(|| t("Sin nombre"), str::to_string)
+                                .replace('/', "-");
                             let path = if parent_path.is_empty() { name } else { format!("{parent_path}/{name}") };
                             found.push((id.to_string(), path.clone()));
                             queue.push((Some(id.to_string()), path));
@@ -425,7 +439,14 @@ impl Loom {
         for (id, path) in &folders {
             self.videos_in(Some(id), Some(path), &mut videos)?;
         }
-        out.warning(None, &format!("Loom: {} vídeos en la biblioteca y {} carpetas", videos.len(), folders.len()));
+        out.warning(
+            None,
+            &tr!(
+                "Loom: {videos} vídeos en la biblioteca y {folders} carpetas",
+                videos = videos.len(),
+                folders = folders.len()
+            ),
+        );
         videos.sort_by_key(|v| v.created_at);
         Ok(videos)
     }
@@ -454,9 +475,9 @@ impl Loom {
         match data["getVideo"]["nullableRawCdnUrl"]["url"].as_str() {
             Some(url) if url.contains(".m3u8") => Ok(Media::Hls(url.to_string())),
             Some(url) if !url.is_empty() => {
-                Err(format!("formato no soportado ({})", url.split('?').next().unwrap_or(url)))
+                Err(tr!("formato no soportado ({url})", url = url.split('?').next().unwrap_or(url)))
             }
-            _ => Err("Loom no da ninguna URL de descarga para este vídeo".into()),
+            _ => Err(t("Loom no da ninguna URL de descarga para este vídeo")),
         }
     }
 
@@ -467,18 +488,21 @@ impl Loom {
 
     /// GET a CDN URL, following up to 5 redirects, each checked first.
     fn get_media(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
-        let mut url = url::Url::parse(url).map_err(|_| "URL de Loom no válida".to_string())?;
+        let mut url = url::Url::parse(url).map_err(|_| t("URL de Loom no válida"))?;
         for _ in 0..=5 {
             check_media_url(url.as_str())?;
             let resp = self.agent.get(url.as_str()).call().map_err(|e| e.to_string())?;
             if !resp.status().is_redirection() {
                 return Ok(resp);
             }
-            let location =
-                resp.headers().get("location").and_then(|v| v.to_str().ok()).ok_or("redirección sin destino")?;
-            url = url.join(location).map_err(|_| "redirección no válida".to_string())?;
+            let location = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| t("redirección sin destino"))?;
+            url = url.join(location).map_err(|_| t("redirección no válida"))?;
         }
-        Err("demasiadas redirecciones".into())
+        Err(t("demasiadas redirecciones"))
     }
 
     /// One HLS segment, retried: with hundreds per video, a dropped connection
@@ -509,7 +533,7 @@ impl Loom {
     fn download(&self, url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
         let resp = self.get_media(url)?;
         if resp.status() != 200 {
-            return Err(format!("descarga: HTTP {}", resp.status()));
+            return Err(tr!("descarga: HTTP {status}", status = resp.status()));
         }
         let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()?.parse().ok()).unwrap_or(0);
         let tmp = dest.with_extension("part");
@@ -525,13 +549,13 @@ impl Loom {
             file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
             done += n as u64;
             if done > MAX_VIDEO_BYTES {
-                return Err("el vídeo supera el tamaño máximo esperado".into());
+                return Err(t("el vídeo supera el tamaño máximo esperado"));
             }
             progress(done, total);
         }
         file.sync_all().map_err(|e| e.to_string())?;
         if total > 0 && done != total {
-            return Err(format!("descarga incompleta ({done} de {total} bytes)"));
+            return Err(tr!("descarga incompleta ({done} de {total} bytes)", done, total));
         }
         std::fs::rename(&tmp, dest).map_err(|e| e.to_string())
     }
@@ -541,11 +565,11 @@ impl Loom {
     /// here, join them, and let ffmpeg remux to MP4 offline.
     fn download_hls(&self, master_url: &str, dir: &Path, dest: &Path) -> Result<(), String> {
         let ffmpeg = find_tool("ffmpeg", "VROOM_FFMPEG")
-            .ok_or("este vídeo solo está en streaming (HLS); instala ffmpeg para importarlo")?;
+            .ok_or_else(|| t("este vídeo solo está en streaming (HLS); instala ffmpeg para importarlo"))?;
         let master = String::from_utf8_lossy(&self.get_bytes(master_url)?).into_owned();
         let (video_uri, audio_uri) = if master.contains("#EXT-X-STREAM-INF") {
             let (v, a) = parse_master(&master);
-            (v.ok_or("lista HLS sin vídeo")?, a)
+            (v.ok_or_else(|| t("lista HLS sin vídeo"))?, a)
         } else {
             (master_url.to_string(), None)
         };
@@ -588,11 +612,11 @@ impl Loom {
     fn concat_segments(&self, playlist_url: &str, dest: &Path) -> Result<bool, String> {
         let text = String::from_utf8_lossy(&self.get_bytes(playlist_url)?).into_owned();
         if text.contains("#EXT-X-KEY") && !text.contains("METHOD=NONE") {
-            return Err("vídeo HLS cifrado; no soportado".into());
+            return Err(t("vídeo HLS cifrado; no soportado"));
         }
         let uris = segment_uris(&text);
         if uris.len() > MAX_SEGMENTS {
-            return Err(format!("lista HLS con demasiados segmentos ({})", uris.len()));
+            return Err(tr!("lista HLS con demasiados segmentos ({n})", n = uris.len()));
         }
         let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
         let mut total = 0u64;
@@ -600,13 +624,13 @@ impl Loom {
             let fetched: Vec<Result<Vec<u8>, String>> = std::thread::scope(|s| {
                 let handles: Vec<_> =
                     batch.iter().map(|uri| s.spawn(|| self.get_segment(&sign(playlist_url, uri)))).collect();
-                handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("descarga interrumpida".into()))).collect()
+                handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(t("descarga interrumpida")))).collect()
             });
             for bytes in fetched {
                 let bytes = bytes?;
                 total += bytes.len() as u64;
                 if total > MAX_VIDEO_BYTES {
-                    return Err("el vídeo supera el tamaño máximo esperado".into());
+                    return Err(t("el vídeo supera el tamaño máximo esperado"));
                 }
                 file.write_all(&bytes).map_err(|e| e.to_string())?;
             }
@@ -632,8 +656,8 @@ fn cookie_pairs(raw: &str) -> String {
 /// Media URLs come from Loom's responses: only https hosts with a public-looking
 /// name. Where the name points is checked by `PublicOnly` when connecting.
 fn check_media_url(url: &str) -> Result<(), String> {
-    let u = url::Url::parse(url).map_err(|_| "URL de Loom no válida".to_string())?;
-    let rejected = || format!("URL de descarga rechazada: {}", u.host_str().unwrap_or("?"));
+    let u = url::Url::parse(url).map_err(|_| t("URL de Loom no válida"))?;
+    let rejected = || tr!("URL de descarga rechazada: {host}", host = u.host_str().unwrap_or("?"));
     let Some(url::Host::Domain(host)) = u.host() else { return Err(rejected()) };
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     let local = [".local", ".internal", ".localhost", ".lan", ".home.arpa"];
@@ -655,7 +679,7 @@ impl Resolver for PublicOnly {
         if addrs.iter().all(|a| is_public(a.ip())) {
             Ok(addrs)
         } else {
-            Err(ureq::Error::BadUri(format!("{} apunta a una red local", uri.host().unwrap_or("?"))))
+            Err(ureq::Error::BadUri(tr!("{host} apunta a una red local", host = uri.host().unwrap_or("?"))))
         }
     }
 }
@@ -695,7 +719,7 @@ fn is_public(ip: IpAddr) -> bool {
 }
 
 fn expired() -> String {
-    "la sesión de Loom no es válida o ha caducado: vuelve a copiar la cookie de loom.com".into()
+    t("la sesión de Loom no es válida o ha caducado: vuelve a copiar la cookie de loom.com")
 }
 
 fn parse_video(node: &Value) -> Option<Video> {

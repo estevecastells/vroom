@@ -25,6 +25,8 @@ pub struct Prefs {
     pub system_audio: bool,
     pub fps: u32,
     pub transcribe: bool,
+    /// Language code chosen in Settings; `None` follows Windows' display language.
+    pub language: Option<String>,
 }
 
 impl Default for Prefs {
@@ -36,6 +38,7 @@ impl Default for Prefs {
             system_audio: false,
             fps: 30,
             transcribe: true,
+            language: None,
         }
     }
 }

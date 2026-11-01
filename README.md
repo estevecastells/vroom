@@ -68,11 +68,11 @@ Put the other way round: a library of 56 hours (about 96 GB) costs about $1.30 a
 - **Folders.** Organise recordings in folders and subfolders. A Loom import keeps Loom's folder tree and titles.
 - **Subtitles on your Mac.** When a recording ends, Whisper (whisper.cpp) transcribes it on this Mac and the share page shows the subtitles. The audio never leaves the computer. It uses MacWhisper's models if you have them, or downloads the open large-v3-turbo model (574 MB, SHA-256 checked); a 2.5-minute video takes about 11 seconds on an M5 Pro.
 - **Local first.** Recordings are plain MP4 files in `~/Movies/Vroom/<id>/`, each with its `meta.json` and thumbnail. You can open, copy or back them up without the app.
-- **Your bucket.** Every recording goes to R2 when it is saved. If the Mac breaks or is stolen, install Vroom on another one and run **Restaurar desde R2**: the whole library comes back, and videos download when you open them.
+- **Your bucket.** Every recording goes to R2 when it is saved. If the Mac breaks or is stolen, install Vroom on another one and run **Restore from R2**: the whole library comes back, and videos download when you open them.
 - **Light.** 0% CPU and about 18 MB when idle. While recording, ScreenCaptureKit sends frames only when the screen changes, already in the encoder's format, and the hardware H.264/HEVC encoder writes them. The file is fragmented every 4 seconds, so a crash or power cut keeps what was recorded.
 - **Leaving Loom.** `vroom loom import` downloads every video you created in Loom, including those in folders, with their captions, and uploads them to R2.
 
-The UI is in Spanish.
+The apps speak English and Spanish, following your system's languages (or the language picked in Settings). [Translations](CONTRIBUTING.md#translations) are welcome.
 
 ## Layout
 
@@ -108,7 +108,7 @@ scripts/setup-r2.sh vroom --public
 
 This creates the `vroom` bucket and an API token that can only read and write that bucket. It saves the secret in the macOS Keychain and connects Vroom. `--public` turns on the bucket's r2.dev URL, so share links open a page with the video and never expire. r2.dev is rate-limited, so for heavy use attach a custom domain to the bucket and set it as the public URL. Without a public URL, links are signed and last 7 days.
 
-**By hand:** create a bucket and an R2 API token with *Object Read & Write* in the dashboard (R2 › Manage API tokens), then fill in **Ajustes › Cloudflare R2**, or run:
+**By hand:** create a bucket and an R2 API token with *Object Read & Write* in the dashboard (R2 › Manage API tokens), then fill in **Settings › Cloudflare R2**, or run:
 
 ```sh
 vroom config r2 --account-id <id> --bucket vroom --access-key-id <key> [--public-url https://videos.example.com]
@@ -122,7 +122,7 @@ Public objects are stored as `recordings/<id>/{video.mp4, thumb.jpg, captions.vt
 Loom has no public API for listing or downloading videos and no bulk export ([LOOM-168](https://jira.atlassian.com/browse/LOOM-168)). Vroom uses the private GraphQL API of loom.com with your browser session, as the maintained open-source archivers do.
 
 1. Sign in to loom.com, open the developer tools › Application › Cookies, and copy `connect.sid`.
-2. In **Ajustes › Importar de Loom**, paste it and press **Ver cuántos hay**, then **Importar todo**. Or from the terminal:
+2. In **Settings › Import from Loom**, paste it and press **Count videos**, then **Import all**. Or from the terminal:
 
 ```sh
 VROOM_LOOM_COOKIE='<connect.sid>' vroom loom list
@@ -141,7 +141,7 @@ vroom transcribe --download-model     # large-v3-turbo (574 MB); or base, small,
 vroom transcribe <id>                 # or --missing for every recording without subtitles
 ```
 
-With MacWhisper installed, its models are used without downloading anything. In the app: **Ajustes › Transcripción**, and right-click › **Transcribir** in the library. A new transcription of a recording that is already in R2 goes up on the next sync.
+With MacWhisper installed, its models are used without downloading anything. In the app: **Settings › Transcription**, and right-click › **Transcribe** in the library. A new transcription of a recording that is already in R2 goes up on the next sync.
 
 ## CLI
 

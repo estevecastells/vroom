@@ -10,7 +10,9 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
+use vroom_core::i18n::t;
 use vroom_core::library::Multipart;
+use vroom_core::tr;
 use vroom_core::R2Config;
 
 const SIGN_FOR: Duration = Duration::from_secs(15 * 60);
@@ -143,7 +145,7 @@ impl R2 {
             let (status, body) = self.call(|| self.agent.get(url.as_str()).call())?;
             expect_ok(status, &body)?;
             let text = String::from_utf8_lossy(&body);
-            let parsed = ListObjectsV2::parse_response(&text).map_err(|e| format!("respuesta de R2: {e}"))?;
+            let parsed = ListObjectsV2::parse_response(&text).map_err(|e| tr!("respuesta de R2: {e}", e))?;
             out.extend(parsed.contents.into_iter().map(|c| Object {
                 key: c.key,
                 size: c.size.unwrap_or(0),
@@ -154,7 +156,7 @@ impl R2 {
                 _ => return Ok(out),
             }
         }
-        Err("R2 devolvió demasiadas páginas al listar".into())
+        Err(t("R2 devolvió demasiadas páginas al listar"))
     }
 
     pub fn delete(&self, key: &str) -> Result<(), String> {
@@ -210,7 +212,7 @@ impl R2 {
                     self.call(|| self.agent.post(url.as_str()).header("content-type", content_type).send_empty())?;
                 expect_ok(status, &body)?;
                 let parsed = CreateMultipartUpload::parse_response(&String::from_utf8_lossy(&body))
-                    .map_err(|e| format!("respuesta de R2: {e}"))?;
+                    .map_err(|e| tr!("respuesta de R2: {e}", e))?;
                 let mp = Multipart {
                     upload_id: parsed.upload_id().to_string(),
                     part_size,
@@ -230,7 +232,7 @@ impl R2 {
             let len = part_size.min(size - offset) as usize;
             file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
             file.read_exact(&mut buf[..len]).map_err(|e| e.to_string())?;
-            let part_number = u16::try_from(n + 1).map_err(|_| "demasiadas partes")?;
+            let part_number = u16::try_from(n + 1).map_err(|_| t("demasiadas partes"))?;
             let url =
                 UploadPart::new(&self.bucket, Some(&self.credentials), key, part_number, &mp.upload_id).sign(SIGN_FOR);
             let mut etag = None;
@@ -242,10 +244,10 @@ impl R2 {
             if status == 404 {
                 // The upload expired or was aborted elsewhere: start over next time.
                 save(None)?;
-                return Err("la subida a medias caducó en R2; se reiniciará".into());
+                return Err(t("la subida a medias caducó en R2; se reiniciará"));
             }
             expect_ok(status, &body)?;
-            mp.etags.push(etag.ok_or("R2 no devolvió ETag")?);
+            mp.etags.push(etag.ok_or_else(|| t("R2 no devolvió ETag"))?);
             save(Some(&mp))?;
             progress(mp.uploaded_bytes(), size);
         }
@@ -313,8 +315,8 @@ impl R2 {
 
 fn describe(e: &ureq::Error) -> String {
     match e {
-        ureq::Error::Io(io) => format!("sin conexión con R2: {io}"),
-        ureq::Error::Timeout(_) => "R2 tardó demasiado en responder".into(),
+        ureq::Error::Io(io) => tr!("sin conexión con R2: {io}", io),
+        ureq::Error::Timeout(_) => t("R2 tardó demasiado en responder"),
         other => other.to_string(),
     }
 }
@@ -344,17 +346,17 @@ pub fn s3_error(status: u16, body: &[u8]) -> String {
     };
     let code = tag("Code").unwrap_or_default();
     let hint = match (status, code.as_str()) {
-        (_, "NoSuchBucket") => "el bucket no existe",
-        (_, "InvalidAccessKeyId") => "el Access Key ID no es válido",
-        (_, "SignatureDoesNotMatch") => "el Secret Access Key no coincide",
-        (401 | 403, _) => "las credenciales no tienen acceso a este bucket",
-        _ => "",
+        (_, "NoSuchBucket") => t("el bucket no existe"),
+        (_, "InvalidAccessKeyId") => t("el Access Key ID no es válido"),
+        (_, "SignatureDoesNotMatch") => t("el Secret Access Key no coincide"),
+        (401 | 403, _) => t("las credenciales no tienen acceso a este bucket"),
+        _ => String::new(),
     };
     let message = tag("Message").unwrap_or_default();
     match (hint.is_empty(), code.is_empty()) {
         (false, _) => format!("R2 {status}: {hint}"),
         (true, false) => format!("R2 {status} {code}: {message}"),
-        (true, true) => format!("R2 respondió {status}"),
+        (true, true) => tr!("R2 respondió {status}", status),
     }
 }
 
@@ -382,7 +384,7 @@ fn copy_to_file(
     }
     out.sync_all().map_err(|e| e.to_string())?;
     if total > 0 && done != total {
-        return Err(format!("descarga incompleta ({done} de {total} bytes)"));
+        return Err(tr!("descarga incompleta ({done} de {total} bytes)", done, total));
     }
     progress(done, total.max(done));
     Ok(())
@@ -402,6 +404,7 @@ mod tests {
 
     #[test]
     fn errors_are_readable() {
+        vroom_core::i18n::set_lang("es");
         let body = b"<?xml version=\"1.0\"?><Error><Code>NoSuchBucket</Code><Message>x</Message></Error>";
         assert_eq!(s3_error(404, body), "R2 404: el bucket no existe");
         assert_eq!(s3_error(400, b"<Error><Code>Weird</Code><Message>m</Message></Error>"), "R2 400 Weird: m");

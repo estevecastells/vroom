@@ -10,9 +10,11 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use vroom_core::config::default_config_path;
+use vroom_core::i18n::t;
 use vroom_core::layout::CAPTIONS;
 use vroom_core::library::Status;
 use vroom_core::protocol::Event;
+use vroom_core::tr;
 
 /// Models `--download-model` offers: name, size in bytes, SHA-256. The first is the default:
 /// large-v3-turbo quantized, close to large-v3 in quality at a fraction of the size and time.
@@ -30,15 +32,16 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
     if take_flag(&mut args, "--download-model") {
         let name = args.into_iter().find(|a| a != "--").unwrap_or_else(|| MODELS[0].0.to_string());
         let path = download_model(&name, |done, total| out.progress("model", done, total))?;
-        out.ok(format!("modelo descargado en {}", path.display()));
+        out.ok(tr!("modelo descargado en {path}", path = path.display()));
         return Ok(());
     }
     let missing = take_flag(&mut args, "--missing");
     let language = take_opt(&mut args, "--language").unwrap_or_else(|| "auto".into());
     let model = find_model(take_opt(&mut args, "--model"))?;
     let whisper = find_tool("whisper-cli", "VROOM_WHISPER")
-        .ok_or("falta whisper.cpp: instálalo con `brew install whisper-cpp`")?;
-    let ffmpeg = find_tool("ffmpeg", "VROOM_FFMPEG").ok_or("falta ffmpeg: instálalo con `brew install ffmpeg`")?;
+        .ok_or_else(|| t("falta whisper.cpp: instálalo con `brew install whisper-cpp`"))?;
+    let ffmpeg =
+        find_tool("ffmpeg", "VROOM_FFMPEG").ok_or_else(|| t("falta ffmpeg: instálalo con `brew install ffmpeg`"))?;
     let ids: Vec<String> = if missing {
         ctx.lib
             .list()?
@@ -50,7 +53,7 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
         args.into_iter().filter(|a| a != "--").collect()
     };
     if ids.is_empty() && !missing {
-        return Err("falta el argumento <id>".into());
+        return Err(tr!("falta el argumento <{what}>", what = "id"));
     }
     let mut failed = 0;
     for id in &ids {
@@ -67,7 +70,7 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
         }
     }
     if failed > 0 {
-        return Err(format!("{failed} de {} transcripciones fallaron", ids.len()));
+        return Err(tr!("{failed} de {total} transcripciones fallaron", failed = failed, total = ids.len()));
     }
     Ok(())
 }
@@ -81,9 +84,9 @@ struct Tools<'a> {
 fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: impl FnMut(u64)) -> Result<(), String> {
     let entry = ctx.lib.entry(id)?;
     if entry.status == Status::Recording {
-        return Err("todavía se está grabando".into());
+        return Err(t("todavía se está grabando"));
     }
-    let video = entry.video.ok_or("el vídeo no está en este ordenador: descárgalo primero")?;
+    let video = entry.video.ok_or_else(|| t("el vídeo no está en este ordenador: descárgalo primero"))?;
     let dir = entry.dir;
     // whisper.cpp wants 16 kHz mono PCM.
     let wav = Temp(dir.join(".transcribe.wav"));
@@ -97,7 +100,7 @@ fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
         if err.contains("does not contain any stream") || err.contains("matches no streams") {
-            return Err("la grabación no tiene audio".into());
+            return Err(t("la grabación no tiene audio"));
         }
         return Err(format!("ffmpeg: {}", err.trim()));
     }
@@ -105,7 +108,7 @@ fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: 
     // On silence Whisper invents text ("Thank you."): no voice, no captions.
     let samples = read_wav(&wav.0)?;
     if voiced_seconds(&samples) < 0.3 {
-        return Err("no se oye voz en la grabación; no hay subtítulos".into());
+        return Err(t("no se oye voz en la grabación; no hay subtítulos"));
     }
     let duration = samples.len() as f64 / 16_000.0;
 
@@ -135,7 +138,7 @@ fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: 
     let status = child.wait().map_err(|e| format!("whisper-cli: {e}"))?;
     if !status.success() || !vtt.0.is_file() {
         let tail = log.iter().rev().take(3).rev().cloned().collect::<Vec<_>>().join("\n");
-        return Err(format!("whisper-cli falló: {tail}"));
+        return Err(tr!("whisper-cli falló: {tail}", tail));
     }
     let text = std::fs::read_to_string(&vtt.0).map_err(|e| e.to_string())?;
     std::fs::write(&vtt.0, shorten_cues(&text, duration)).map_err(|e| e.to_string())?;
@@ -184,7 +187,8 @@ fn shorten_cues(vtt: &str, duration: f64) -> String {
 /// The samples of the 16-bit mono WAV that ffmpeg wrote.
 fn read_wav(path: &Path) -> Result<Vec<i16>, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let data = bytes.windows(4).position(|w| w == b"data").map(|i| i + 8).ok_or("audio extraído no válido")?;
+    let data =
+        bytes.windows(4).position(|w| w == b"data").map(|i| i + 8).ok_or_else(|| t("audio extraído no válido"))?;
     Ok(bytes[data.min(bytes.len())..].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect())
 }
 
@@ -221,9 +225,10 @@ fn status(out: &Out) -> Result<(), String> {
     let model = find_model(None).ok().map(|p| p.display().to_string());
     let whisper = find_tool("whisper-cli", "VROOM_WHISPER").map(|p| p.display().to_string());
     let text = format!(
-        "modelo: {}\nwhisper-cli: {}",
-        model.as_deref().unwrap_or("ninguno (vroom transcribe --download-model)"),
-        whisper.as_deref().unwrap_or("no instalado (brew install whisper-cpp)")
+        "{}: {}\nwhisper-cli: {}",
+        t("modelo"),
+        model.clone().unwrap_or_else(|| t("ninguno (vroom transcribe --download-model)")),
+        whisper.clone().unwrap_or_else(|| t("no instalado (brew install whisper-cpp)"))
     );
     out.event(&Event::Transcriber { model, whisper }, || text);
     Ok(())
@@ -238,7 +243,7 @@ fn models_dir() -> PathBuf {
 fn download_model(name: &str, mut progress: impl FnMut(u64, u64)) -> Result<PathBuf, String> {
     let (_, size, sha) = MODELS.iter().find(|m| m.0 == name).ok_or_else(|| {
         let names: Vec<&str> = MODELS.iter().map(|m| m.0).collect();
-        format!("modelo desconocido {name}; elige uno de: {}", names.join(", "))
+        tr!("modelo desconocido {name}; elige uno de: {names}", name = name, names = names.join(", "))
     })?;
     let dir = models_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -253,7 +258,7 @@ fn download_model(name: &str, mut progress: impl FnMut(u64, u64)) -> Result<Path
         .build()
         .into();
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin");
-    let resp = agent.get(&url).call().map_err(|e| format!("descarga del modelo: {e}"))?;
+    let resp = agent.get(&url).call().map_err(|e| tr!("descarga del modelo: {e}", e))?;
     let mut reader = resp.into_body().into_with_config().limit(size + 1).reader();
     let part = Temp(dest.with_extension("part"));
     let mut file = std::fs::File::create(&part.0).map_err(|e| e.to_string())?;
@@ -261,7 +266,7 @@ fn download_model(name: &str, mut progress: impl FnMut(u64, u64)) -> Result<Path
     let mut buf = vec![0; 1 << 20];
     let mut done = 0;
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("descarga del modelo: {e}"))?;
+        let n = reader.read(&mut buf).map_err(|e| tr!("descarga del modelo: {e}", e))?;
         if n == 0 {
             break;
         }
@@ -273,7 +278,7 @@ fn download_model(name: &str, mut progress: impl FnMut(u64, u64)) -> Result<Path
     file.sync_all().map_err(|e| e.to_string())?;
     let hex: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     if done != *size || hex != *sha {
-        return Err("el modelo descargado no coincide con el publicado; no se usará".into());
+        return Err(t("el modelo descargado no coincide con el publicado; no se usará"));
     }
     std::fs::rename(&part.0, &dest).map_err(|e| e.to_string())?;
     Ok(dest)
@@ -284,7 +289,7 @@ fn download_model(name: &str, mut progress: impl FnMut(u64, u64)) -> Result<Path
 fn find_model(explicit: Option<String>) -> Result<PathBuf, String> {
     if let Some(p) = explicit.or_else(|| std::env::var("VROOM_WHISPER_MODEL").ok()) {
         let p = PathBuf::from(p);
-        return if p.is_file() { Ok(p) } else { Err(format!("no existe el modelo {}", p.display())) };
+        return if p.is_file() { Ok(p) } else { Err(tr!("no existe el modelo {path}", path = p.display())) };
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let biggest = |dir: PathBuf| {
@@ -301,7 +306,7 @@ fn find_model(explicit: Option<String>) -> Result<PathBuf, String> {
     };
     biggest(models_dir())
         .or_else(|| home.and_then(|h| biggest(h.join("Library/Application Support/MacWhisper/models"))))
-        .ok_or_else(|| "no hay ningún modelo de Whisper: descárgalo con `vroom transcribe --download-model`".into())
+        .ok_or_else(|| t("no hay ningún modelo de Whisper: descárgalo con `vroom transcribe --download-model`"))
 }
 
 /// A scratch file removed however the transcription ends.

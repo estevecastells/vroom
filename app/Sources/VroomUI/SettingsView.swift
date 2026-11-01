@@ -12,7 +12,7 @@ public struct SettingsView: View {
     public var body: some View {
         TabView {
             RecordingSettings(model: model).tabItem { Label("Grabación", systemImage: "record.circle") }
-            CloudSettings(model: model).tabItem { Label("Cloudflare R2", systemImage: "icloud") }
+            CloudSettings(model: model).tabItem { Label { Text(verbatim: "Cloudflare R2") } icon: { Image(systemName: "icloud") } }
             LibrarySettings(model: model).tabItem { Label("Biblioteca", systemImage: "folder") }
             TranscriptionSettings(model: model).tabItem { Label("Transcripción", systemImage: "captions.bubble") }
             LoomImport(model: model).tabItem { Label("Importar de Loom", systemImage: "square.and.arrow.down") }
@@ -29,24 +29,39 @@ private struct RecordingSettings: View {
 
     var body: some View {
         Form {
-            Picker("Resolución", selection: $model.prefs.maxHeight) {
-                Text("720p").tag(720)
-                Text("1080p").tag(1080)
-                Text("1440p").tag(1440)
-                Text("Nativa (Retina)").tag(0)
+            Section {
+                Picker("Idioma", selection: $model.appLanguage) {
+                    Text("Automático").tag(String?.none)
+                    ForEach(AppModel.availableLanguages, id: \.code) { Text(verbatim: $0.name).tag(Optional($0.code)) }
+                }
+                if model.appLanguage != model.launchLanguage {
+                    HStack {
+                        Text("El nuevo idioma se aplica al reabrir Vroom.").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reabrir Vroom") { model.relaunch() }
+                    }
+                }
             }
-            Picker("Fotogramas", selection: $model.prefs.fps) {
-                Text("30 fps").tag(30)
-                Text("60 fps").tag(60)
+            Section {
+                Picker("Resolución", selection: $model.prefs.maxHeight) {
+                    Text(verbatim: "720p").tag(720)
+                    Text(verbatim: "1080p").tag(1080)
+                    Text(verbatim: "1440p").tag(1440)
+                    Text("Nativa (Retina)").tag(0)
+                }
+                Picker("Fotogramas", selection: $model.prefs.fps) {
+                    Text(verbatim: "30 fps").tag(30)
+                    Text(verbatim: "60 fps").tag(60)
+                }
+                Picker("Códec", selection: $model.prefs.codec) {
+                    Text("H.264 (se ve en cualquier navegador)").tag(RecorderSettings.Codec.h264)
+                    Text("HEVC (archivos ~40 % más pequeños)").tag(RecorderSettings.Codec.hevc)
+                }
+                Toggle("Cuenta atrás de 3 segundos", isOn: $model.prefs.countdown)
+                Toggle("Abrir al iniciar sesión", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
+                Text("⌥⇧R empieza y termina una grabación desde cualquier app. La cámara aparece como una burbuja que puedes arrastrar; la barra de control no sale en el vídeo.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Picker("Códec", selection: $model.prefs.codec) {
-                Text("H.264 (se ve en cualquier navegador)").tag(RecorderSettings.Codec.h264)
-                Text("HEVC (archivos ~40 % más pequeños)").tag(RecorderSettings.Codec.hevc)
-            }
-            Toggle("Cuenta atrás de 3 segundos", isOn: $model.prefs.countdown)
-            Toggle("Abrir al iniciar sesión", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
-            Text("⌥⇧R empieza y termina una grabación desde cualquier app. La cámara aparece como una burbuja que puedes arrastrar; la barra de control no sale en el vídeo.")
-                .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
     }
@@ -73,7 +88,7 @@ private struct CloudSettings: View {
                 TextField("Bucket", text: $bucket)
                 TextField("Access Key ID", text: $accessKeyID)
                 SecureField("Secret Access Key", text: $secret,
-                            prompt: Text(model.config?.hasSecret == true ? "guardado en el llavero" : ""))
+                            prompt: Text(model.config?.hasSecret == true ? String(localized: "guardado en el llavero") : ""))
                 TextField("URL pública (opcional)", text: $publicURL, prompt: Text("https://videos.tudominio.com"))
                 TextField("Prefijo (opcional)", text: $prefix, prompt: Text("p. ej. esteve/"))
             } header: {
@@ -91,7 +106,7 @@ private struct CloudSettings: View {
                 if model.config?.config.r2 != nil {
                     Button("Desconectar") { Task { await model.disconnect() } }
                 }
-                Button(busy ? "Comprobando…" : "Conectar") { connect() }
+                Button(busy ? LocalizedStringKey("Comprobando…") : LocalizedStringKey("Conectar")) { connect() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(busy || accountID.isEmpty || bucket.isEmpty || accessKeyID.isEmpty
                               || (secret.isEmpty && model.config?.hasSecret != true))
@@ -133,7 +148,7 @@ private struct CloudSettings: View {
                 publicURL: publicURL.trimmingCharacters(in: .whitespaces), prefix: prefix.trimmingCharacters(in: .whitespaces))
             busy = false
             failed = error != nil
-            message = error ?? "Conectado: R2 responde y las credenciales funcionan."
+            message = error ?? String(localized: "Conectado: R2 responde y las credenciales funcionan.")
             if error == nil { secret = "" }
         }
     }
@@ -170,14 +185,16 @@ private struct TranscriptionSettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section("whisper.cpp") {
+            Section {
                 if let w = model.whisperPath {
                     LabeledContent("Programa") { Text(w).foregroundStyle(.secondary) }
                 } else {
                     Text("Falta whisper.cpp. Instálalo desde Terminal:")
-                    Text("brew install whisper-cpp ffmpeg").font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                    Text(verbatim: "brew install whisper-cpp ffmpeg").font(.system(.body, design: .monospaced)).textSelection(.enabled)
                     Button("Comprobar de nuevo") { Task { await model.reloadTranscriber() } }
                 }
+            } header: {
+                Text(verbatim: "whisper.cpp")
             }
         }
         .formStyle(.grouped)
@@ -222,7 +239,7 @@ private struct LibrarySettings: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
-        panel.prompt = "Usar esta carpeta"
+        panel.prompt = String(localized: "Usar esta carpeta")
         if panel.runModal() == .OK, let url = panel.url { model.set("library", url.path) }
     }
 }
@@ -287,9 +304,9 @@ private struct LoomImport: View {
                     Task { @MainActor in handle(event) }
                 }
             } catch is CancellationError {
-                log.append("Detenido.")
+                log.append(String(localized: "Detenido."))
             } catch {
-                log.append("Error: \(error.localizedDescription)")
+                log.append(String(localized: "Error: \(error.localizedDescription)"))
             }
             running = false
             progress = nil
@@ -303,11 +320,11 @@ private struct LoomImport: View {
             progress = (id, Double(done) / Double(total))
         case let .done(id, what):
             let title = model.entries.first { $0.id == id }?.title ?? id
-            log.append("\(what == "uploaded" ? "↑ subido" : "✓ importado"): \(title)")
+            log.append(what == "uploaded" ? String(localized: "↑ subido: \(title)") : String(localized: "✓ importado: \(title)"))
             if what == "imported" { Task { await model.refresh() } }
         case let .warning(_, message): log.append(message)
         case let .ok(message): log.append(message)
-        case let .error(message): log.append("Error: \(message)")
+        case let .error(message, _): log.append(String(localized: "Error: \(message)"))
         default: break
         }
     }

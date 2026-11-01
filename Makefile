@@ -3,9 +3,10 @@
 build:            ## Build the CLI (release)
 	cargo build --release --locked
 
-test:             ## Rust tests (incl. a fake S3) + Swift protocol checks
+test:             ## Rust tests (incl. a fake S3) + Swift protocol checks + app translations
 	cargo test --locked
 	cd app && swift run -c debug KitChecks
+	swift scripts/check-strings.swift
 
 lint:             ## Formatting and lints
 	cargo fmt --all --check

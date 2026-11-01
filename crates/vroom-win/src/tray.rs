@@ -7,6 +7,7 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::sync::mpsc::Sender;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use vroom_core::i18n::t;
 
 pub enum TrayMsg {
     Toggle,
@@ -20,15 +21,18 @@ pub struct Tray {
     _hotkeys: Option<GlobalHotKeyManager>,
     record: MenuItem,
     cancel: MenuItem,
+    show: MenuItem,
+    quit: MenuItem,
 }
 
 impl Tray {
     /// Must run on the thread with the event loop (eframe's creation callback).
     pub fn new(ctx: eframe::egui::Context, tx: Sender<TrayMsg>) -> Result<Tray, String> {
-        let record = MenuItem::with_id("record", "Grabar\tAlt+Mayús+R", true, None);
-        let cancel = MenuItem::with_id("cancel", "Cancelar grabación", false, None);
-        let show = MenuItem::with_id("show", "Abrir biblioteca", true, None);
-        let quit = MenuItem::with_id("quit", "Salir de Vroom", true, None);
+        // Same texts as `relabel`, which sets them again when the language changes.
+        let record = MenuItem::with_id("record", t("Grabar\tAlt+Mayús+R"), true, None);
+        let cancel = MenuItem::with_id("cancel", t("Cancelar grabación"), false, None);
+        let show = MenuItem::with_id("show", t("Abrir biblioteca"), true, None);
+        let quit = MenuItem::with_id("quit", t("Salir de Vroom"), true, None);
         let menu = Menu::new();
         menu.append_items(&[
             &record,
@@ -78,12 +82,20 @@ impl Tray {
                 ctx.request_repaint();
             }
         }));
-        Ok(Tray { _icon: icon, _hotkeys: hotkeys, record, cancel })
+        Ok(Tray { _icon: icon, _hotkeys: hotkeys, record, cancel, show, quit })
     }
 
     pub fn set_recording(&self, recording: bool) {
-        self.record.set_text(if recording { "Detener grabación\tAlt+Mayús+R" } else { "Grabar\tAlt+Mayús+R" });
+        self.record.set_text(if recording { t("Detener grabación\tAlt+Mayús+R") } else { t("Grabar\tAlt+Mayús+R") });
         self.cancel.set_enabled(recording);
+    }
+
+    /// Sets every menu text again, after the language changed.
+    pub fn relabel(&self, recording: bool) {
+        self.set_recording(recording);
+        self.cancel.set_text(t("Cancelar grabación"));
+        self.show.set_text(t("Abrir biblioteca"));
+        self.quit.set_text(t("Salir de Vroom"));
     }
 }
 

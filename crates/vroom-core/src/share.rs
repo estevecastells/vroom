@@ -2,25 +2,34 @@
 //! bucket URL it is what a share link opens: the video, its title and date.
 //! Relative links only, so it works under any domain or prefix.
 
+use crate::i18n::t_in;
 use crate::layout::{CAPTIONS, THUMB, VIDEO};
 use crate::meta::Meta;
 
+/// The page in the current language.
 pub fn page(meta: &Meta, has_thumb: bool, has_captions: bool) -> String {
+    page_in(&crate::i18n::lang(), meta, has_thumb, has_captions)
+}
+
+pub fn page_in(lang: &str, meta: &Meta, has_thumb: bool, has_captions: bool) -> String {
     let title = escape(&meta.title);
+    let code = escape(lang);
     let date = meta.created_at.date();
     let duration = format_duration(meta.duration_secs);
     let poster = if has_thumb { format!(r#" poster="{THUMB}""#) } else { String::new() };
     let track = if has_captions {
-        format!(r#"<track kind="captions" src="{CAPTIONS}" srclang="es" label="Subtítulos" default>"#)
+        let label = escape(&t_in(lang, "Subtítulos"));
+        format!(r#"<track kind="captions" src="{CAPTIONS}" srclang="{code}" label="{label}" default>"#)
     } else {
         String::new()
     };
     let og_image = if has_thumb { format!(r#"<meta property="og:image" content="{THUMB}">"#) } else { String::new() };
+    let download = escape(&t_in(lang, "Descargar"));
     let description =
         meta.description.as_deref().map(|d| format!("<p class=\"desc\">{}</p>", escape(d))).unwrap_or_default();
     format!(
         r#"<!doctype html>
-<html lang="es">
+<html lang="{code}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -46,7 +55,7 @@ h1 {{ font-size: 1.4rem; margin: 18px 0 4px; }}
 <main>
 <video src="{VIDEO}" controls playsinline preload="metadata"{poster}>{track}</video>
 <h1>{title}</h1>
-<div class="meta">{date} · {duration} · <a href="{VIDEO}" download>Descargar</a></div>
+<div class="meta">{date} · {duration} · <a href="{VIDEO}" download>{download}</a></div>
 {description}
 </main>
 </body>
@@ -95,6 +104,19 @@ mod tests {
         assert!(html.contains(r#"poster="thumb.jpg""#));
         assert!(html.contains("2026-11-01 · 1:15"));
         assert!(!html.contains("<track"));
+    }
+
+    #[test]
+    fn page_in_english_and_spanish() {
+        let m = Meta::new("abcdefghij".into(), "Demo".into(), datetime!(2026-11-01 13:00 UTC));
+        let en = page_in("en", &m, false, true);
+        assert!(en.contains(r#"<html lang="en">"#));
+        assert!(en.contains(r#"srclang="en" label="Subtitles""#));
+        assert!(en.contains("download>Download</a>"));
+        let es = page_in("es", &m, false, true);
+        assert!(es.contains(r#"<html lang="es">"#));
+        assert!(es.contains(r#"srclang="es" label="Subtítulos""#));
+        assert!(es.contains("download>Descargar</a>"));
     }
 
     #[test]

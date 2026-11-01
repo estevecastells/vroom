@@ -51,8 +51,8 @@ public enum AudioMixdown {
         writer.add(videoIn)
         writer.add(audioIn)
 
-        guard reader.startReading() else { throw RecorderError.writer(reader.error?.localizedDescription ?? "lectura") }
-        guard writer.startWriting() else { throw RecorderError.writer(writer.error?.localizedDescription ?? "escritura") }
+        guard reader.startReading() else { throw RecorderError.writer(reader.error?.localizedDescription ?? String(localized: "lectura")) }
+        guard writer.startWriting() else { throw RecorderError.writer(writer.error?.localizedDescription ?? String(localized: "escritura")) }
         writer.startSession(atSourceTime: .zero)
 
         async let v: Void = pump(videoOut, into: videoIn, label: "video")
@@ -62,12 +62,12 @@ public enum AudioMixdown {
         if reader.status == .failed {
             writer.cancelWriting()
             try? FileManager.default.removeItem(at: tmp)
-            throw RecorderError.writer(reader.error?.localizedDescription ?? "lectura")
+            throw RecorderError.writer(reader.error?.localizedDescription ?? String(localized: "lectura"))
         }
         await writer.finishWriting()
         guard writer.status == .completed else {
             try? FileManager.default.removeItem(at: tmp)
-            throw RecorderError.writer(writer.error?.localizedDescription ?? "escritura")
+            throw RecorderError.writer(writer.error?.localizedDescription ?? String(localized: "escritura"))
         }
         _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
     }

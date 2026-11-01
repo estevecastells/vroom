@@ -12,11 +12,13 @@ use std::process::ExitCode;
 use time::OffsetDateTime;
 use vroom_cloud::{sync, R2};
 use vroom_core::config::{default_config_path, Config, R2Config};
-use vroom_core::protocol::{Event, PROTOCOL_VERSION};
-use vroom_core::Library;
+use vroom_core::i18n::t;
+use vroom_core::protocol::{error_code, Event, PROTOCOL_VERSION};
+use vroom_core::{tr, Library};
 
-const USAGE: &str = "\
-vroom: grabaciones locales con copia en Cloudflare R2
+/// The help text, translated as one piece so each language can align its columns.
+fn usage() -> String {
+    t("vroom: grabaciones locales con copia en Cloudflare R2
 
   vroom list                        grabaciones, de la más nueva a la más antigua
   vroom sync                        sube lo pendiente y libera copias locales caducadas
@@ -47,7 +49,8 @@ vroom: grabaciones locales con copia en Cloudflare R2
   vroom loom list                   lista lo que se importaría
 
   Para la app: new [--title t] [--folder f], finalize <id> --duration s --width w --height h, recover, version.
-  --json en cualquier comando imprime eventos JSON, uno por línea.";
+  --json en cualquier comando imprime eventos JSON, uno por línea.")
+}
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,11 +59,15 @@ fn main() -> ExitCode {
     match run(&out, args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            out.event(&Event::Error { message: message.clone() }, || format!("error: {message}"));
+            let code = ERROR_CODE.get().copied().or(out.warned().then_some(error_code::PARTIAL)).map(str::to_string);
+            out.event(&Event::Error { message: message.clone(), code }, || format!("error: {message}"));
             ExitCode::FAILURE
         }
     }
 }
+
+/// Why the command failed, when the apps should react to it rather than show it.
+static ERROR_CODE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
 
 struct Ctx {
     config_path: std::path::PathBuf,
@@ -78,8 +85,11 @@ impl Ctx {
     }
 
     fn r2(&self) -> Result<R2, String> {
-        let cfg = self.config.r2.as_ref().ok_or("R2 no está configurado: vroom config r2 …")?;
-        let secret = secret::get(&cfg.access_key_id)?.ok_or("falta el Secret Access Key de R2")?;
+        let cfg = self.config.r2.as_ref().ok_or_else(|| {
+            let _ = ERROR_CODE.set(error_code::NO_CLOUD);
+            t("R2 no está configurado: vroom config r2 …")
+        })?;
+        let secret = secret::get(&cfg.access_key_id)?.ok_or_else(|| t("falta el Secret Access Key de R2"))?;
         R2::new(cfg, &secret)
     }
 
@@ -89,7 +99,10 @@ impl Ctx {
         let f = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         match f.try_lock() {
             Ok(()) => Ok(f),
-            Err(std::fs::TryLockError::WouldBlock) => Err("ya hay una sincronización en marcha".into()),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                let _ = ERROR_CODE.set(error_code::BUSY);
+                Err(t("ya hay una sincronización en marcha"))
+            }
             Err(std::fs::TryLockError::Error(e)) => Err(e.to_string()),
         }
     }
@@ -97,7 +110,7 @@ impl Ctx {
 
 fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
     if args.is_empty() || take_flag(&mut args, "--help") || take_flag(&mut args, "-h") {
-        println!("{USAGE}");
+        println!("{}", usage());
         return Ok(());
     }
     let cmd = args.remove(0);
@@ -139,11 +152,11 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         "recover" => {
             // An import or sync elsewhere is writing; its folders are not leftovers.
             let Ok(_lock) = ctx.lock() else {
-                out.ok("biblioteca en uso; no se recupera nada".into());
+                out.ok(t("biblioteca en uso; no se recupera nada"));
                 return Ok(());
             };
             let ids = ctx.lib.recover()?;
-            out.ok(format!("{} grabaciones recuperadas", ids.len()));
+            out.ok(tr!("{n} grabaciones recuperadas", n = ids.len()));
             Ok(())
         }
         "rename" => {
@@ -165,13 +178,13 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
                     ctx.lib.create_folder(&rest(&args))?;
                 }
                 "rename" | "move" => {
-                    let from = positional(&mut args, "carpeta")?;
+                    let from = positional(&mut args, &t("carpeta"))?;
                     ctx.lib.rename_folder(&from, &rest(&args))?;
                 }
                 "delete" | "rm" => {
                     ctx.lib.delete_folder(&rest(&args))?;
                 }
-                other => return Err(format!("vroom folder: subcomando desconocido {other}")),
+                other => return Err(tr!("vroom folder: subcomando desconocido {other}", other)),
             }
             let folders = ctx.lib.folders()?;
             out.event(&Event::Folders { folders: folders.clone() }, || folders.join("\n"));
@@ -194,14 +207,14 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             let keep_cloud = take_flag(&mut args, "--keep-cloud");
             let id = positional(&mut args, "id")?;
             if !ctx.lib.contains(&id) {
-                return Err(format!("no existe la grabación {id}"));
+                return Err(tr!("no existe la grabación {id}", id));
             }
             let in_cloud = ctx.lib.state(&id).uploaded_at.is_some() || ctx.lib.state(&id).multipart.is_some();
             if !keep_cloud && in_cloud {
                 sync::delete_remote(&ctx.r2()?, &ctx.lib, &id)?;
             }
             ctx.lib.remove(&id)?;
-            out.ok(format!("{id} borrada"));
+            out.ok(tr!("{id} borrada", id));
             Ok(())
         }
         "upload" => {
@@ -210,7 +223,7 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             let r2 = ctx.r2()?;
             let ids = if pending { ctx.lib.pending_upload()? } else { args };
             if ids.is_empty() && !pending {
-                return Err("¿qué grabación? vroom upload <id> o --pending".into());
+                return Err(t("¿qué grabación? vroom upload <id> o --pending"));
             }
             upload_all(out, &ctx, &r2, &ids)
         }
@@ -219,7 +232,7 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             ctx.lib.recover()?;
             let r2 = ctx.r2()?;
             if let Err(e) = sync::push_folders(&r2, &ctx.lib) {
-                out.warning(None, &format!("carpetas: {e}"));
+                out.warning(None, &tr!("carpetas: {e}", e));
             }
             upload_all(out, &ctx, &r2, &ctx.lib.pending_upload()?)?;
             for id in ctx.lib.expired_local(ctx.config.keep_local_days, OffsetDateTime::now_utc())? {
@@ -232,10 +245,10 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             let _lock = ctx.lock()?;
             let r2 = ctx.r2()?;
             let restored = sync::restore(&r2, &ctx.lib, |id| out.done(id, "restored"))?;
-            out.ok(format!(
-                "{} grabaciones recuperadas de R2 ({} ya estaban aquí)",
-                restored.added.len(),
-                restored.already_here
+            out.ok(tr!(
+                "{n} grabaciones recuperadas de R2 ({here} ya estaban aquí)",
+                n = restored.added.len(),
+                here = restored.already_here
             ));
             Ok(())
         }
@@ -251,10 +264,10 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             let early = take_flag(&mut args, "--before-upload");
             let id = positional(&mut args, "id")?;
             if !ctx.lib.contains(&id) {
-                return Err(format!("no existe la grabación {id}"));
+                return Err(tr!("no existe la grabación {id}", id));
             }
             if !early && ctx.lib.state(&id).uploaded_at.is_none() {
-                return Err("la grabación aún no está subida a R2".into());
+                return Err(t("la grabación aún no está subida a R2"));
             }
             let (url, expires_at) = sync::share_link(&ctx.r2()?, &id);
             out.event(&Event::Link { id, url: url.clone(), expires_at }, || url.clone());
@@ -268,13 +281,13 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         }
         "check" => {
             ctx.r2()?.check()?;
-            out.ok("R2 responde y las credenciales funcionan".into());
+            out.ok(t("R2 responde y las credenciales funcionan"));
             Ok(())
         }
         "config" => config(out, &mut ctx, args),
         "loom" => loom::run(out, &ctx, args),
         "transcribe" => transcribe::run(out, &ctx, args),
-        other => Err(format!("comando desconocido: {other}\n\n{USAGE}")),
+        other => Err(format!("{}\n\n{}", tr!("comando desconocido: {other}", other), usage())),
     }
 }
 
@@ -291,7 +304,7 @@ fn upload_all(out: &Out, ctx: &Ctx, r2: &R2, ids: &[String]) -> Result<(), Strin
         }
     }
     if failed > 0 {
-        return Err(format!("{failed} de {} subidas fallaron; se reintentarán", ids.len()));
+        return Err(tr!("{failed} de {total} subidas fallaron; se reintentarán", failed = failed, total = ids.len()));
     }
     Ok(())
 }
@@ -302,10 +315,16 @@ fn config(out: &Out, ctx: &mut Ctx, mut args: Vec<String>) -> Result<(), String>
         Some("r2") => {
             args.remove(0);
             let cfg = R2Config {
-                account_id: take_opt(&mut args, "--account-id").ok_or("falta --account-id")?.trim().to_string(),
-                bucket: take_opt(&mut args, "--bucket").ok_or("falta --bucket")?.trim().to_string(),
+                account_id: take_opt(&mut args, "--account-id")
+                    .ok_or_else(|| tr!("falta {option}", option = "--account-id"))?
+                    .trim()
+                    .to_string(),
+                bucket: take_opt(&mut args, "--bucket")
+                    .ok_or_else(|| tr!("falta {option}", option = "--bucket"))?
+                    .trim()
+                    .to_string(),
                 access_key_id: take_opt(&mut args, "--access-key-id")
-                    .ok_or("falta --access-key-id")?
+                    .ok_or_else(|| tr!("falta {option}", option = "--access-key-id"))?
                     .trim()
                     .to_string(),
                 public_url: take_opt(&mut args, "--public-url")
@@ -320,7 +339,7 @@ fn config(out: &Out, ctx: &mut Ctx, mut args: Vec<String>) -> Result<(), String>
             if !secret.is_empty() {
                 secret::set(&cfg.access_key_id, &secret)?;
             } else if secret::get(&cfg.access_key_id)?.is_none() {
-                return Err("falta el Secret Access Key (por stdin)".into());
+                return Err(t("falta el Secret Access Key (por stdin)"));
             }
             R2::new(&cfg, &secret::get(&cfg.access_key_id)?.unwrap_or_default())?.check()?;
             if let Some(old) = &ctx.config.r2 {
@@ -338,17 +357,17 @@ fn config(out: &Out, ctx: &mut Ctx, mut args: Vec<String>) -> Result<(), String>
             ctx.config.save(&ctx.config_path)?;
         }
         Some("set") => {
-            let key = args.get(1).ok_or("vroom config set <clave> <valor>")?.clone();
+            let key = args.get(1).ok_or_else(|| t("vroom config set <clave> <valor>"))?.clone();
             let value = args.get(2).cloned().unwrap_or_default();
             match key.as_str() {
                 "library" => ctx.config.library = (!value.is_empty()).then(|| value.into()),
                 "auto_upload" => ctx.config.auto_upload = parse_bool(&value)?,
-                "keep_local_days" => ctx.config.keep_local_days = value.parse().map_err(|_| "un número de días")?,
-                _ => return Err(format!("clave desconocida: {key}")),
+                "keep_local_days" => ctx.config.keep_local_days = value.parse().map_err(|_| t("un número de días"))?,
+                _ => return Err(tr!("clave desconocida: {key}", key)),
             }
             ctx.config.save(&ctx.config_path)?;
         }
-        Some(other) => return Err(format!("vroom config: subcomando desconocido {other}")),
+        Some(other) => return Err(tr!("vroom config: subcomando desconocido {other}", other)),
     }
     let has_secret = match &ctx.config.r2 {
         Some(r2) => secret::get(&r2.access_key_id).ok().flatten().is_some(),
@@ -361,29 +380,27 @@ fn config(out: &Out, ctx: &mut Ctx, mut args: Vec<String>) -> Result<(), String>
         has_secret,
     };
     out.event(&event, || {
-        let mut s =
-            format!("config:     {}\nbiblioteca: {}\n", ctx.config_path.display(), ctx.config.library_dir().display());
-        s += &format!("auto-subida: {}\n", if ctx.config.auto_upload { "sí" } else { "no" });
-        s += &format!(
-            "copia local: {}\n",
-            match ctx.config.keep_local_days {
-                0 => "se conserva siempre".into(),
-                d => format!("se borra {d} días después de subirla"),
-            }
+        // Labels padded so the values line up, whatever their language.
+        let row = |label: &str, value: &str| format!("{:<11} {value}\n", format!("{label}:"));
+        let mut s = row("config", &ctx.config_path.display().to_string());
+        s += &row(&t("biblioteca"), &ctx.config.library_dir().display().to_string());
+        s += &row(&t("auto-subida"), &if ctx.config.auto_upload { t("sí") } else { t("no") });
+        s += &row(
+            &t("copia local"),
+            &match ctx.config.keep_local_days {
+                0 => t("se conserva siempre"),
+                d => tr!("se borra {d} días después de subirla", d),
+            },
         );
         match &ctx.config.r2 {
             Some(r2) => {
-                s += &format!(
-                    "R2:         {} / bucket {}{}\n",
-                    r2.account_id,
-                    r2.bucket,
-                    if has_secret { "" } else { " (falta el secret)" }
-                );
+                let missing = if has_secret { String::new() } else { format!(" ({})", t("falta el secret")) };
+                s += &row("R2", &format!("{} / bucket {}{missing}", r2.account_id, r2.bucket));
                 if let Some(u) = &r2.public_url {
-                    s += &format!("público:    {u}\n");
+                    s += &row(&t("público"), u);
                 }
             }
-            None => s += "R2:         sin configurar\n",
+            None => s += &row("R2", &t("sin configurar")),
         }
         s
     });
@@ -403,14 +420,14 @@ fn parse_bool(v: &str) -> Result<bool, String> {
     match v {
         "true" | "1" | "yes" | "on" | "si" | "sí" => Ok(true),
         "false" | "0" | "no" | "off" => Ok(false),
-        _ => Err(format!("se esperaba true o false, no {v}")),
+        _ => Err(tr!("se esperaba true o false, no {v}", v)),
     }
 }
 
 pub(crate) fn read_stdin_line() -> Result<String, String> {
     use std::io::IsTerminal;
     if std::io::stdin().is_terminal() {
-        eprint!("Pega el valor y pulsa Intro: ");
+        eprint!("{} ", t("Pega el valor y pulsa Intro:"));
     }
     let mut s = String::new();
     std::io::stdin().read_line(&mut s).map_err(|e| e.to_string())?;
@@ -464,7 +481,7 @@ fn positional(args: &mut Vec<String>, what: &str) -> Result<String, String> {
         args.remove(0);
     }
     if args.is_empty() || args[0].starts_with("--") {
-        return Err(format!("falta el argumento <{what}>"));
+        return Err(tr!("falta el argumento <{what}>", what));
     }
     Ok(args.remove(0))
 }

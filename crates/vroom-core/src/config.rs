@@ -1,6 +1,7 @@
 //! `config.toml` in the platform config folder. The R2 secret is not here: it
 //! lives in the OS credential store (Keychain, Windows Credential Manager).
 
+use crate::i18n::t;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -57,14 +58,14 @@ impl R2Config {
         if self.endpoint.is_none()
             && (self.account_id.len() != 32 || !self.account_id.bytes().all(|b| b.is_ascii_hexdigit()))
         {
-            return Err("el Account ID son 32 caracteres hexadecimales".into());
+            return Err(t("el Account ID son 32 caracteres hexadecimales"));
         }
         if self.bucket.is_empty() || self.access_key_id.is_empty() {
-            return Err("faltan el bucket o el Access Key ID".into());
+            return Err(t("faltan el bucket o el Access Key ID"));
         }
         if let Some(u) = &self.public_url {
             if !u.starts_with("https://") {
-                return Err("la URL pública debe empezar por https://".into());
+                return Err(t("la URL pública debe empezar por https://"));
             }
         }
         Ok(())

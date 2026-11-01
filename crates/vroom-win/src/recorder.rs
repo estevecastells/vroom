@@ -11,6 +11,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use vroom_core::i18n::t;
+use vroom_core::tr;
 use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
 use windows_capture::encoder::{
     AudioSettingsBuilder, ContainerSettingsBuilder, VideoEncoder, VideoSettingsBuilder, VideoSettingsSubType,
@@ -79,7 +81,7 @@ pub fn monitors() -> Vec<String> {
                 (Ok(w), Ok(h)) => format!(" ({w}×{h})"),
                 _ => String::new(),
             };
-            format!("Pantalla {}{size}", i + 1)
+            tr!("Pantalla {n}{size}", n = i + 1, size = size)
         })
         .collect()
 }
@@ -106,11 +108,11 @@ impl Recorder {
                     Target::Monitor(index) => {
                         let monitor = match index.map_or_else(Monitor::primary, |i| Monitor::from_index(i + 1)) {
                             Ok(m) => m,
-                            Err(e) => return fail(&ready_tx, format!("pantalla: {e}")),
+                            Err(e) => return fail(&ready_tx, tr!("pantalla: {e}", e)),
                         };
                         let (w, h) = match (monitor.width(), monitor.height()) {
                             (Ok(w), Ok(h)) => (w, h),
-                            _ => return fail(&ready_tx, "no se pudo leer el tamaño de la pantalla".into()),
+                            _ => return fail(&ready_tx, t("no se pudo leer el tamaño de la pantalla")),
                         };
                         let flags = Flags::new(&flags_shared, w, h, fps, has_audio, &video, &thumb);
                         let _ = ready_tx.send(Ok((thread_id, flags.width, flags.height)));
@@ -127,7 +129,7 @@ impl Recorder {
                                 let _ = ready_tx.send(Err(StartError::Cancelled));
                                 return Ok(());
                             }
-                            Err(e) => return fail(&ready_tx, format!("selector: {e}")),
+                            Err(e) => return fail(&ready_tx, tr!("selector: {e}", e)),
                         };
                         let (w, h) = match item.size() {
                             Ok((w, h)) => (w.max(2) as u32, h.max(2) as u32),
@@ -140,8 +142,8 @@ impl Recorder {
                 };
                 // Capture is over (WM_QUIT): close the file properly.
                 let encoder = flags_shared.encoder.lock().unwrap().take();
-                let finished = encoder.map_or(Ok(()), |e| e.finish().map_err(|e| format!("codificador: {e}")));
-                result.map_err(|e| format!("captura: {e}"))?;
+                let finished = encoder.map_or(Ok(()), |e| e.finish().map_err(|e| tr!("codificador: {e}", e)));
+                result.map_err(|e| tr!("captura: {e}", e))?;
                 finished
             })
             .map_err(|e| StartError::Failed(e.to_string()))?;
@@ -155,7 +157,7 @@ impl Recorder {
             Err(_) => {
                 let reason = match capture.join() {
                     Ok(Err(e)) => e,
-                    _ => "la captura no arrancó".into(),
+                    _ => t("la captura no arrancó"),
                 };
                 return Err(StartError::Failed(reason));
             }
@@ -211,7 +213,7 @@ impl Recorder {
         unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0) };
         let result = match self.capture.take().map(JoinHandle::join) {
             Some(Ok(r)) => r,
-            Some(Err(_)) => Err("la captura se cerró de forma inesperada".into()),
+            Some(Err(_)) => Err(t("la captura se cerró de forma inesperada")),
             None => Ok(()),
         };
         // In case the thread ended before taking it (it should not).
@@ -308,7 +310,7 @@ impl GraphicsCaptureApiHandler for Handler {
             ContainerSettingsBuilder::new(),
             &f.video,
         )
-        .map_err(|e| format!("no se pudo crear el vídeo: {e}"))?;
+        .map_err(|e| tr!("no se pudo crear el vídeo: {e}", e))?;
         *f.shared.encoder.lock().unwrap() = Some(encoder);
         Ok(Handler { shared: f.shared, thumb: Some(f.thumb), first_frame: None })
     }

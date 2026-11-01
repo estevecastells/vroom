@@ -21,6 +21,12 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$swift_bin" "$app/Contents/MacOS/Vroom"
 cp target/release/vroom "$app/Contents/Resources/vroom"
 cp app/Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+# Translations: one <lang>.lproj per language (see app/Resources/en.lproj/Localizable.strings).
+localizations=""
+for lproj in app/Resources/*.lproj; do
+  cp -R "$lproj" "$app/Contents/Resources/"
+  localizations+="<string>$(basename "$lproj" .lproj)</string>"
+done
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -28,6 +34,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleIdentifier</key><string>io.github.estevecastells.vroom.app</string>
   <key>CFBundleName</key><string>Vroom</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array>${localizations}</array>
   <key>CFBundleDisplayName</key><string>Vroom</string>
   <key>CFBundleExecutable</key><string>Vroom</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -37,8 +45,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-  <key>NSCameraUsageDescription</key><string>Vroom muestra tu cámara en una burbuja dentro de la grabación.</string>
-  <key>NSMicrophoneUsageDescription</key><string>Vroom graba tu voz junto con la pantalla.</string>
+  <key>NSCameraUsageDescription</key><string>Vroom shows your camera in a bubble inside the recording.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Vroom records your voice along with the screen.</string>
 </dict>
 </plist>
 PLIST

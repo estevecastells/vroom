@@ -2,6 +2,7 @@
 
 use std::io::Write;
 use std::time::{Duration, Instant};
+use vroom_core::i18n::t;
 use vroom_core::library::{Entry, Status};
 use vroom_core::protocol::Event;
 use vroom_core::share::format_duration;
@@ -10,11 +11,13 @@ pub struct Out {
     json: bool,
     /// Progress lines are throttled so a fast upload does not flood the app.
     last_progress: std::sync::Mutex<Option<Instant>>,
+    /// A warning went out, so a final error only sums them up.
+    warned: std::sync::atomic::AtomicBool,
 }
 
 impl Out {
     pub fn new(json: bool) -> Out {
-        Out { json, last_progress: std::sync::Mutex::new(None) }
+        Out { json, last_progress: std::sync::Mutex::new(None), warned: std::sync::atomic::AtomicBool::new(false) }
     }
 
     pub fn event(&self, event: &Event, text: impl FnOnce() -> String) {
@@ -43,18 +46,23 @@ impl Out {
     pub fn done(&self, id: &str, what: &str) {
         self.event(&Event::Done { id: id.into(), what: what.into() }, || {
             let verb = match what {
-                "uploaded" => "subida",
-                "restored" => "recuperada",
-                "freed" => "copia local liberada",
-                "imported" => "importada",
-                "transcribed" => "transcrita",
-                other => other,
+                "uploaded" => t("subida"),
+                "restored" => t("recuperada"),
+                "freed" => t("copia local liberada"),
+                "imported" => t("importada"),
+                "transcribed" => t("transcrita"),
+                other => other.to_string(),
             };
             format!("{id}: {verb}")
         });
     }
 
+    pub fn warned(&self) -> bool {
+        self.warned.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn warning(&self, id: Option<&str>, message: &str) {
+        self.warned.store(true, std::sync::atomic::Ordering::Relaxed);
         self.event(&Event::Warning { id: id.map(str::to_string), message: message.into() }, || match id {
             Some(id) => format!("{id}: {message}"),
             None => message.to_string(),
@@ -103,25 +111,31 @@ fn mb(bytes: u64) -> String {
 
 pub fn table(entries: &[Entry]) -> String {
     if entries.is_empty() {
-        return "No hay grabaciones.".into();
+        return t("No hay grabaciones.");
     }
+    let status = |s: Status| match s {
+        Status::Recording => t("grabando"),
+        Status::Local => t("local"),
+        Status::Uploading => t("subiendo"),
+        Status::Synced => t("en R2"),
+        Status::Cloud => t("solo R2"),
+    };
+    // As wide as the longest status in this language, so the titles line up.
+    let width = [Status::Recording, Status::Local, Status::Uploading, Status::Synced, Status::Cloud]
+        .map(|s| status(s).chars().count())
+        .into_iter()
+        .max()
+        .unwrap_or(0);
     entries
         .iter()
         .map(|e| {
-            let status = match e.status {
-                Status::Recording => "grabando",
-                Status::Local => "local",
-                Status::Uploading => "subiendo",
-                Status::Synced => "en R2",
-                Status::Cloud => "solo R2",
-            };
             format!(
-                "{}  {}  {:>8}  {:>9}  {:<8}  {}",
+                "{}  {}  {:>8}  {:>9}  {:<width$}  {}",
                 e.meta.id,
                 e.meta.created_at.date(),
                 format_duration(e.meta.duration_secs),
                 mb(e.meta.size_bytes),
-                status,
+                status(e.status),
                 e.meta.title
             )
         })

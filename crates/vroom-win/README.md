@@ -36,6 +36,14 @@ Done:
 - Settings: what to record, monitor, microphone, system audio, fps;
   connect, check, restore and disconnect R2; library folder, auto upload,
   local copy retention; Whisper model download; Loom import.
+- English and Spanish. The app follows Windows' display language (English
+  when it has no translation) unless one is picked in **Settings › Language**,
+  and passes it to `vroom.exe` as `VROOM_LANG`. Strings are written in
+  Spanish in the code (`vroom_core::tr!`, `vroom_core::i18n::t`); to add a
+  language, add `locales/<code>.json` here (and the CLI's, in
+  `crates/vroom-core/locales/`) and one line to `BUILT_IN` in `src/lang.rs`.
+  `cargo test -p vroom-win` checks that the catalogs cover every string,
+  on any system.
 
 Not done yet, in rough order of value:
 
@@ -74,7 +82,7 @@ app) and the R2 secret is in the Windows Credential Manager.
 For transcription, put `whisper-cli.exe` and its DLLs from
 [whisper.cpp's releases](https://github.com/ggml-org/whisper.cpp/releases)
 next to `vroom.exe`, and install ffmpeg (`winget install Gyan.FFmpeg`). Then
-download the model from **Ajustes › Transcripción**.
+download the model from **Settings › Transcription**.
 
 Things worth checking first: a 10-second recording with the microphone, one
 with system audio playing, the window picker, and that the MP4 plays in the

@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use vroom_core::i18n::t;
+use vroom_core::tr;
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;
@@ -59,7 +61,7 @@ impl Audio {
                     match open(&device, false) {
                         Ok(s) => sources.push(s),
                         Err(e) => {
-                            let _ = ready_tx.send(Err(format!("micrófono: {e}")));
+                            let _ = ready_tx.send(Err(tr!("micrófono: {e}", e)));
                             return;
                         }
                     }
@@ -68,12 +70,12 @@ impl Audio {
                     // An output device opened for input is WASAPI loopback.
                     match host
                         .default_output_device()
-                        .ok_or("no hay salida de audio".to_string())
+                        .ok_or_else(|| t("no hay salida de audio"))
                         .and_then(|d| open(&d, true))
                     {
                         Ok(s) => sources.push(s),
                         Err(e) => {
-                            let _ = ready_tx.send(Err(format!("audio del sistema: {e}")));
+                            let _ = ready_tx.send(Err(tr!("audio del sistema: {e}", e)));
                             return;
                         }
                     }
@@ -83,7 +85,7 @@ impl Audio {
                 drop(sources);
             })
             .map_err(|e| e.to_string())?;
-        ready_rx.recv().map_err(|_| "el audio no arrancó".to_string())??;
+        ready_rx.recv().map_err(|_| t("el audio no arrancó"))??;
         Ok(Audio { stop, thread: Some(thread) })
     }
 
@@ -162,7 +164,7 @@ fn open(device: &cpal::Device, loopback: bool) -> Result<Source, String> {
             on_error,
             None,
         ),
-        other => return Err(format!("formato de audio no soportado: {other:?}")),
+        other => return Err(tr!("formato de audio no soportado: {format}", format = format!("{other:?}"))),
     }
     .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;

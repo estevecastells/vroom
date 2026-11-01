@@ -51,9 +51,14 @@ check(try {
 }(), "decodes config")
 
 check(try {
-    guard case let .error(m) = try decode("error.json") else { return false }
-    return m.contains("R2")
+    guard case let .error(m, code) = try decode("error.json") else { return false }
+    return m.contains("R2") && code == nil
 }(), "decodes errors")
+
+check(try {
+    guard case let .error(_, code) = try decode("error-busy.json") else { return false }
+    return code == ErrorCode.busy
+}(), "decodes error codes")
 
 check(try {
     let line = #"{"type":"entry","entry":{"id":"at0f29ktsk8cwk4zbnap","title":"Prueba","created_at":"2026-11-01T14:37:28.57461+01:00","duration_secs":0.0,"width":0,"height":0,"size_bytes":0,"source":"vroom","status":"recording","dir":"/x"}}"#

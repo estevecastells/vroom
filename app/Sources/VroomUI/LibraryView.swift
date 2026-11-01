@@ -63,7 +63,7 @@ public struct LibraryView: View {
                 HStack {
                     Spacer()
                     Button("Cancelar") { folderSheet = nil }.keyboardShortcut(.cancelAction)
-                    Button(sheet.isRename ? "Renombrar" : "Crear") { commitFolder(sheet) }.keyboardShortcut(.defaultAction)
+                    Button(sheet.isRename ? LocalizedStringKey("Renombrar") : LocalizedStringKey("Crear")) { commitFolder(sheet) }.keyboardShortcut(.defaultAction)
                 }
             }
             .padding(20)
@@ -121,7 +121,7 @@ public struct LibraryView: View {
                         .help("Sube lo pendiente ahora")
                 }
                 Button { model.toggleRecording() } label: {
-                    Label(model.isRecording ? "Terminar" : "Grabar", systemImage: model.isRecording ? "stop.fill" : "record.circle")
+                    Label(model.isRecording ? LocalizedStringKey("Terminar") : LocalizedStringKey("Grabar"), systemImage: model.isRecording ? "stop.fill" : "record.circle")
                 }
             }
         }
@@ -184,8 +184,8 @@ public struct LibraryView: View {
                 Button("Eliminar", role: .destructive) { model.delete(entry, keepCloud: true) }
             }
         } message: { entry in
-            Text(entry.isInCloud ? "Los enlaces compartidos dejarán de funcionar si la borras de R2."
-                 : "Es la única copia: no está en la nube.")
+            Text(entry.isInCloud ? LocalizedStringKey("Los enlaces compartidos dejarán de funcionar si la borras de R2.")
+                 : LocalizedStringKey("Es la única copia: no está en la nube."))
         }
         .frame(minWidth: 560, minHeight: 400)
     }
@@ -204,7 +204,7 @@ public struct LibraryView: View {
         }
         if entry.videoURL != nil { Button("Mostrar en Finder") { model.reveal(entry) } }
         if entry.videoURL != nil && entry.status != .recording {
-            Button(entry.captions == nil ? "Transcribir" : "Volver a transcribir") { model.transcribe(entry) }
+            Button(entry.captions == nil ? LocalizedStringKey("Transcribir") : LocalizedStringKey("Volver a transcribir")) { model.transcribe(entry) }
                 .disabled(!model.canTranscribe || model.transcribing[entry.id] != nil)
         }
         Divider()
@@ -280,9 +280,11 @@ enum FolderSheet: Identifiable {
 
     var title: String {
         switch self {
-        case .create(nil): "Nueva carpeta"
-        case let .create(parent?): "Nueva carpeta dentro de «\(parent)»"
-        case let .rename(path): "Renombrar «\(path.split(separator: "/").last ?? "")»"
+        case .create(nil): return String(localized: "Nueva carpeta")
+        case let .create(parent?): return String(localized: "Nueva carpeta dentro de «\(parent)»")
+        case let .rename(path):
+            let name = String(path.split(separator: "/").last ?? "")
+            return String(localized: "Renombrar «\(name)»")
         }
     }
 }
@@ -302,8 +304,8 @@ enum FolderFilter: Hashable {
 
     var title: String {
         switch self {
-        case .all: return "Biblioteca"
-        case .none: return "Sin carpeta"
+        case .all: return String(localized: "Biblioteca")
+        case .none: return String(localized: "Sin carpeta")
         case let .folder(path): return path.replacingOccurrences(of: "/", with: " › ")
         }
     }
@@ -337,7 +339,7 @@ private struct Card: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
                 if let t = transcribing {
-                    Text(t > 0 ? "Transcribiendo \(Int(t * 100)) %" : "Transcripción en cola")
+                    Text(t > 0 ? LocalizedStringKey("Transcribiendo \(Int(t * 100)) %") : LocalizedStringKey("Transcripción en cola"))
                         .font(.caption2.monospacedDigit())
                         .padding(.horizontal, 5).padding(.vertical, 2)
                         .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 4))
@@ -361,7 +363,7 @@ private struct Card: View {
                 if entry.captions != nil {
                     Image(systemName: "captions.bubble").font(.caption2).foregroundStyle(.secondary).help("Con subtítulos")
                 }
-                if entry.source == .loom { Text("Loom").font(.caption2).foregroundStyle(.secondary) }
+                if entry.source == .loom { Text(verbatim: "Loom").font(.caption2).foregroundStyle(.secondary) }
                 StatusIcon(entry: entry, progress: nil)
             }
         }

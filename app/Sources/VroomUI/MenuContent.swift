@@ -32,7 +32,7 @@ public struct MenuContent: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Vroom").font(.headline)
+                Text(verbatim: "Vroom").font(.headline)
                 Spacer()
                 if model.syncing { Label("Subiendo…", systemImage: "arrow.up.circle").font(.caption).foregroundStyle(.secondary) }
             }
@@ -82,7 +82,7 @@ public struct MenuContent: View {
                 Image(systemName: model.isRecording ? "stop.fill" : "record.circle")
                 Text(recordTitle)
                 Spacer()
-                Text("⌥⇧R").font(.caption).foregroundStyle(.secondary)
+                Text(verbatim: "⌥⇧R").font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
         }
@@ -108,12 +108,12 @@ public struct MenuContent: View {
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var recordTitle: String {
+    private var recordTitle: LocalizedStringKey {
         switch model.phase {
-        case .idle: "Grabar"
-        case .preparing: "Cancelar"
-        case .recording: "Terminar"
-        case .saving: "Guardando…"
+        case .idle: LocalizedStringKey("Grabar")
+        case .preparing: LocalizedStringKey("Cancelar")
+        case .recording: LocalizedStringKey("Terminar")
+        case .saving: LocalizedStringKey("Guardando…")
         }
     }
 
@@ -134,8 +134,8 @@ public struct MenuContent: View {
                 } label: { Image(systemName: "display").frame(width: 18) }
             } else {
                 Text(model.prefs.captureMode == .window
-                     ? "Al pulsar Grabar, haz clic en la ventana que quieras."
-                     : "Al pulsar Grabar, arrastra para elegir el área.")
+                     ? LocalizedStringKey("Al pulsar Grabar, haz clic en la ventana que quieras.")
+                     : LocalizedStringKey("Al pulsar Grabar, arrastra para elegir el área."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Picker(selection: $model.prefs.cameraID) {
@@ -233,11 +233,15 @@ enum Format {
 
     static func status(_ e: Entry) -> String {
         switch e.status {
-        case .recording: return "Grabando"
-        case .local: return e.error.map { "Solo en este Mac. Último error: \($0)" } ?? "Solo en este Mac"
-        case .uploading: return "Subiendo a R2" + (e.error.map { ". Último error: \($0)" } ?? "")
-        case .synced: return "En este Mac y en R2"
-        case .cloud: return "Solo en R2"
+        case .recording: return String(localized: "Grabando")
+        case .local:
+            return e.error.map { String(localized: "Solo en este Mac. Último error: \($0)") }
+                ?? String(localized: "Solo en este Mac")
+        case .uploading:
+            return e.error.map { String(localized: "Subiendo a R2. Último error: \($0)") }
+                ?? String(localized: "Subiendo a R2")
+        case .synced: return String(localized: "En este Mac y en R2")
+        case .cloud: return String(localized: "Solo en R2")
         }
     }
 }

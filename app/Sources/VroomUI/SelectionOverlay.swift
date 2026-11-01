@@ -187,8 +187,8 @@ private final class SelectionView: NSView {
             drawPill(label, at: NSPoint(x: target.midX, y: target.maxY - 28))
         }
         let hint = mode == .window
-            ? "Haz clic en la ventana que quieres grabar · Esc para cancelar"
-            : "Arrastra para elegir el área que quieres grabar · Esc para cancelar"
+            ? String(localized: "Haz clic en la ventana que quieres grabar · Esc para cancelar")
+            : String(localized: "Arrastra para elegir el área que quieres grabar · Esc para cancelar")
         drawPill(hint, at: NSPoint(x: bounds.midX, y: bounds.maxY - 90))
     }
 
