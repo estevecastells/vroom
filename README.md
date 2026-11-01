@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" alt="" width="96" align="right">
+
 # Vroom
 
 **Record your screen, camera, voice and system audio locally and keep a copy in your own Cloudflare R2 bucket.** A small replacement for the basic Loom workflow: press ⌥⇧R, talk, stop, and the share link is already on your clipboard while the video uploads.
