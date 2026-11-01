@@ -249,8 +249,10 @@ impl Loom {
             .timeout_connect(Some(Duration::from_secs(20)))
             .timeout_recv_response(Some(Duration::from_secs(120)))
             .timeout_per_read(Some(Duration::from_secs(120)))
-            // Loom and its CDN are all https; this also covers redirects.
+            // Loom and its CDN are all https. Redirects are followed by hand
+            // (`get_media`) so every hop goes through `check_media_url`.
             .https_only(true)
+            .max_redirects(0)
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")
             .build()
             .into();
@@ -423,10 +425,25 @@ impl Loom {
         data["fetchVideoTranscript"]["captions_source_url"].as_str().filter(|u| !u.is_empty()).map(str::to_string)
     }
 
+    /// GET a CDN URL, following up to 5 redirects, each checked first.
+    fn get_media(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
+        let mut url = url::Url::parse(url).map_err(|_| "URL de Loom no válida".to_string())?;
+        for _ in 0..=5 {
+            check_media_url(url.as_str())?;
+            let resp = self.agent.get(url.as_str()).call().map_err(|e| e.to_string())?;
+            if !resp.status().is_redirection() {
+                return Ok(resp);
+            }
+            let location =
+                resp.headers().get("location").and_then(|v| v.to_str().ok()).ok_or("redirección sin destino")?;
+            url = url.join(location).map_err(|_| "redirección no válida".to_string())?;
+        }
+        Err("demasiadas redirecciones".into())
+    }
+
     /// CDN URLs are signed; no cookie goes to them.
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
-        check_media_url(url)?;
-        let resp = self.agent.get(url).call().map_err(|e| e.to_string())?;
+        let resp = self.get_media(url)?;
         if resp.status() != 200 {
             return Err(format!("HTTP {}", resp.status()));
         }
@@ -434,8 +451,7 @@ impl Loom {
     }
 
     fn download(&self, url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
-        check_media_url(url)?;
-        let resp = self.agent.get(url).call().map_err(|e| e.to_string())?;
+        let resp = self.get_media(url)?;
         if resp.status() != 200 {
             return Err(format!("descarga: HTTP {}", resp.status()));
         }
@@ -550,16 +566,45 @@ fn cookie_pairs(raw: &str) -> String {
 }
 
 /// Media URLs come from Loom's responses: only public https hosts, never this
-/// machine or the local network.
+/// machine or the local network, by name or by what the name resolves to.
 fn check_media_url(url: &str) -> Result<(), String> {
     let u = url::Url::parse(url).map_err(|_| "URL de Loom no válida".to_string())?;
-    let ok = u.scheme() == "https"
-        && matches!(u.host(), Some(url::Host::Domain(h))
-            if h.contains('.') && !h.ends_with(".local") && !h.ends_with(".internal") && !h.ends_with(".localhost"));
-    if ok {
+    let rejected = || format!("URL de descarga rechazada: {}", u.host_str().unwrap_or("?"));
+    let Some(url::Host::Domain(host)) = u.host() else { return Err(rejected()) };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let local = [".local", ".internal", ".localhost", ".lan", ".home.arpa"];
+    if u.scheme() != "https" || !host.contains('.') || local.iter().any(|s| host.ends_with(s)) {
+        return Err(rejected());
+    }
+    let addrs = std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)).map_err(|e| format!("{host}: {e}"))?;
+    if addrs.into_iter().all(|a| is_public(a.ip())) {
         Ok(())
     } else {
-        Err(format!("URL de descarga rechazada: {}", u.host_str().unwrap_or("?")))
+        Err(rejected())
+    }
+}
+
+fn is_public(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b)))
+        }
+        std::net::IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            match v6.to_ipv4_mapped() {
+                Some(v4) => is_public(v4.into()),
+                None => {
+                    !(v6.is_loopback() || v6.is_unspecified() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80)
+                }
+            }
+        }
     }
 }
 
@@ -680,11 +725,17 @@ mod tests {
 
     #[test]
     fn only_public_https_media_urls() {
-        assert!(check_media_url("https://cdn.loom.com/sessions/x.mp4?Signature=s").is_ok());
         assert!(check_media_url("http://cdn.loom.com/x.mp4").is_err());
         assert!(check_media_url("https://127.0.0.1/x").is_err());
         assert!(check_media_url("https://[::1]/x").is_err());
         assert!(check_media_url("https://localhost/x").is_err());
+        assert!(check_media_url("https://localhost./x").is_err());
+        assert!(check_media_url("https://printer.LOCAL./x").is_err());
+        assert!(!is_public("10.0.0.1".parse().unwrap()));
+        assert!(!is_public("169.254.169.254".parse().unwrap()));
+        assert!(!is_public("::ffff:127.0.0.1".parse().unwrap()));
+        assert!(!is_public("fd00::1".parse().unwrap()));
+        assert!(is_public("1.1.1.1".parse().unwrap()));
         assert!(check_media_url("file:///etc/passwd").is_err());
     }
 
