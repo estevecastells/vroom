@@ -90,6 +90,8 @@ pub struct Video {
     pub created_at: Option<OffsetDateTime>,
     pub duration_secs: f64,
     pub thumbnail: Option<String>,
+    /// Loom folder path, `Parent/Child`.
+    pub folder: Option<String>,
 }
 
 pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
@@ -150,10 +152,14 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
             out.done(&id, "imported");
         } else {
             skipped += 1;
+            // Imported before folders existed, or moved in Loom since.
+            if v.folder.is_some() && ctx.lib.meta(&id).ok().and_then(|m| m.folder).is_none() {
+                ctx.lib.set_folder(&id, v.folder.as_deref())?;
+            }
         }
         if let Some(r2) = &r2 {
             let state = ctx.lib.state(&id);
-            if state.uploaded_at.is_none() {
+            if state.uploaded_at.is_none() || state.meta_dirty {
                 match sync::upload(r2, &ctx.lib, &id, |d, t| out.progress(&id, d, t)) {
                     Ok(()) => out.done(&id, "uploaded"),
                     Err(e) => {
@@ -185,6 +191,7 @@ fn import_one(out: &Out, ctx: &Ctx, loom: &Loom, v: &Video, id: &str) -> Result<
     );
     meta.source = Source::Loom;
     meta.source_id = Some(v.id.clone());
+    meta.folder = v.folder.clone();
     meta.duration_secs = v.duration_secs;
     ctx.lib.write_meta(&meta)?;
     let dir = ctx.lib.dir(id)?;
@@ -229,9 +236,11 @@ impl Loom {
     fn new(cookie: &str) -> Result<Loom, String> {
         let cookie = cookie.trim().trim_start_matches("Cookie:").trim();
         if cookie.is_empty() {
-            return Err("falta la cookie connect.sid de loom.com".into());
+            return Err("falta la cookie de loom.com".into());
         }
-        let cookie = if cookie.contains("connect.sid=") { cookie.to_string() } else { format!("connect.sid={cookie}") };
+        // A whole Cookie header (name=value; …) as copied from the browser, or just
+        // the value of connect.sid.
+        let cookie = if cookie.contains('=') { cookie.to_string() } else { format!("connect.sid={cookie}") };
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(20)))
@@ -293,11 +302,12 @@ impl Loom {
         Err(last)
     }
 
-    /// Folder ids, walking subfolders: videos inside folders are not in the main list.
-    fn folders(&self) -> Result<Vec<String>, String> {
-        let mut found = Vec::new();
-        let mut queue: Vec<Option<String>> = vec![None];
-        while let Some(parent) = queue.pop() {
+    /// Folder ids and their paths (`Parent/Child`), walking subfolders: videos
+    /// inside folders are not in the main list.
+    fn folders(&self) -> Result<Vec<(String, String)>, String> {
+        let mut found: Vec<(String, String)> = Vec::new();
+        let mut queue: Vec<(Option<String>, String)> = vec![(None, String::new())];
+        while let Some((parent, parent_path)) = queue.pop() {
             let mut after: Option<String> = None;
             loop {
                 let data = self.gql(
@@ -311,9 +321,12 @@ impl Loom {
                 let conn = &data["getPublishedFolders"]["folders"];
                 for edge in conn["edges"].as_array().into_iter().flatten() {
                     if let Some(id) = edge["node"]["id"].as_str() {
-                        if !found.iter().any(|f| f == id) {
-                            found.push(id.to_string());
-                            queue.push(Some(id.to_string()));
+                        if !found.iter().any(|(f, _)| f == id) {
+                            // A slash inside a name would read as a subfolder.
+                            let name = edge["node"]["name"].as_str().unwrap_or("Sin nombre").replace('/', "-");
+                            let path = if parent_path.is_empty() { name } else { format!("{parent_path}/{name}") };
+                            found.push((id.to_string(), path.clone()));
+                            queue.push((Some(id.to_string()), path));
                         }
                     }
                 }
@@ -327,7 +340,7 @@ impl Loom {
         Ok(found)
     }
 
-    fn videos_in(&self, folder: Option<&str>, into: &mut Vec<Video>) -> Result<(), String> {
+    fn videos_in(&self, folder: Option<&str>, path: Option<&str>, into: &mut Vec<Video>) -> Result<(), String> {
         let filters = match folder {
             None => json!([[{ "type": "CREATED_BY_ME" }], [{ "type": "NOT_IN_FOLDER" }]]),
             Some(_) => json!([[{ "type": "CREATED_BY_ME" }]]),
@@ -344,7 +357,8 @@ impl Loom {
             )?;
             let conn = &data["getLooms"]["videos"];
             for edge in conn["edges"].as_array().into_iter().flatten() {
-                if let Some(v) = parse_video(&edge["node"]) {
+                if let Some(mut v) = parse_video(&edge["node"]) {
+                    v.folder = path.and_then(vroom_core::meta::normalize_folder);
                     if !into.iter().any(|x| x.id == v.id) {
                         into.push(v);
                     }
@@ -359,10 +373,10 @@ impl Loom {
 
     fn all_videos(&self, out: &Out) -> Result<Vec<Video>, String> {
         let mut videos = Vec::new();
-        self.videos_in(None, &mut videos)?;
+        self.videos_in(None, None, &mut videos)?;
         let folders = self.folders()?;
-        for f in &folders {
-            self.videos_in(Some(f), &mut videos)?;
+        for (id, path) in &folders {
+            self.videos_in(Some(id), Some(path), &mut videos)?;
         }
         out.warning(None, &format!("Loom: {} vídeos en la biblioteca y {} carpetas", videos.len(), folders.len()));
         videos.sort_by_key(|v| v.created_at);
@@ -494,7 +508,7 @@ impl Loom {
 }
 
 fn expired() -> String {
-    "la sesión de Loom no es válida o ha caducado: vuelve a copiar la cookie connect.sid".into()
+    "la sesión de Loom no es válida o ha caducado: vuelve a copiar la cookie de loom.com".into()
 }
 
 fn parse_video(node: &Value) -> Option<Video> {
@@ -509,6 +523,7 @@ fn parse_video(node: &Value) -> Option<Video> {
             .as_str()
             .or(node["signedDefaultThumbnails"]["default"].as_str())
             .map(str::to_string),
+        folder: None,
         id,
     })
 }

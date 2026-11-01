@@ -195,6 +195,22 @@ impl Library {
         self.entry(id)
     }
 
+    /// Put a recording in a folder (`None` or empty: the top level).
+    pub fn set_folder(&self, id: &str, folder: Option<&str>) -> Result<Entry, String> {
+        let mut meta = self.meta(id)?;
+        let folder = folder.and_then(crate::meta::normalize_folder);
+        if meta.folder != folder {
+            meta.folder = folder;
+            self.write_meta(&meta)?;
+            let mut state = self.state(id);
+            if state.uploaded_at.is_some() {
+                state.meta_dirty = true;
+                self.write_state(id, &state)?;
+            }
+        }
+        self.entry(id)
+    }
+
     /// Free disk space: drop the local video of a recording that is safely in R2.
     pub fn remove_local_video(&self, id: &str) -> Result<Entry, String> {
         let dir = self.existing_dir(id)?;
@@ -366,6 +382,8 @@ mod tests {
         assert_eq!(lib.expired_local(30, NOW + time::Duration::days(31)).unwrap(), vec![id.clone()]);
         assert!(lib.expired_local(30, NOW + time::Duration::days(29)).unwrap().is_empty());
 
+        lib.set_folder(&id, Some(" Clientes / Acme ")).unwrap();
+        assert_eq!(lib.meta(&id).unwrap().folder.as_deref(), Some("Clientes/Acme"));
         lib.rename(&id, "Demo").unwrap();
         assert_eq!(lib.pending_upload().unwrap(), vec![id.clone()], "renamed: meta goes up again");
 

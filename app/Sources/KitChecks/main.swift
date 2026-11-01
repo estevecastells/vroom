@@ -30,6 +30,7 @@ check(try {
         && a.createdAt == Date(timeIntervalSince1970: 1_793_539_925) && a.uploadedAt != nil && a.thumbURL != nil
         && a.isInCloud
         && b.status == .uploading && b.progress == 0.5 && b.error == "conexión perdida" && b.uploadedAt == nil
+        && a.folder == nil && c.folder == "Equipo/Weekly"
         && c.source == .loom && c.sourceId == "0f2b8c1e9a7d4b3c" && c.status == .cloud && c.videoURL == nil
 }(), "decodes the library list")
 

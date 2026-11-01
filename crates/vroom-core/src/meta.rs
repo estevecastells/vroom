@@ -33,6 +33,9 @@ pub struct Meta {
     pub source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Folder path inside the library, `/`-separated (`Clientes/Acme`); none at the top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 impl Meta {
@@ -48,6 +51,7 @@ impl Meta {
             source: Source::Vroom,
             source_id: None,
             description: None,
+            folder: None,
         }
     }
 }
@@ -65,10 +69,22 @@ pub fn default_title(at: OffsetDateTime) -> String {
     )
 }
 
+/// `" a / b//c "` → `Some("a/b/c")`; empty → `None`.
+pub fn normalize_folder(path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.split('/').map(str::trim).filter(|p| !p.is_empty()).collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use time::macros::datetime;
+
+    #[test]
+    fn folders_are_normalized() {
+        assert_eq!(normalize_folder(" Clientes / Acme//"), Some("Clientes/Acme".into()));
+        assert_eq!(normalize_folder(" / "), None);
+    }
 
     #[test]
     fn title_in_spanish() {

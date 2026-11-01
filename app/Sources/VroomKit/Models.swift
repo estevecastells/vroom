@@ -22,6 +22,8 @@ public struct Entry: Codable, Equatable, Identifiable, Sendable {
     public var source: RecordingSource
     public var sourceId: String?
     public var description: String?
+    /// `Parent/Child`, or nil at the top level.
+    public var folder: String?
     public var status: RecordingStatus
     public var dir: String
     public var video: String?

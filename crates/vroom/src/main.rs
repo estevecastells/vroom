@@ -24,6 +24,7 @@ vroom: grabaciones locales con copia en Cloudflare R2
   vroom download <id>               baja el vídeo de una grabación que solo está en R2
   vroom restore                     reconstruye la biblioteca desde R2 (ordenador nuevo)
   vroom rename <id> <título>
+  vroom move <id> [carpeta/sub]     mueve a una carpeta (sin carpeta: al nivel superior)
   vroom free <id>                   borra el vídeo local de una grabación ya subida
   vroom delete <id> [--keep-cloud]  borra la grabación (también de R2, salvo --keep-cloud)
 
@@ -38,7 +39,7 @@ vroom: grabaciones locales con copia en Cloudflare R2
                                     o en VROOM_LOOM_COOKIE)
   vroom loom list                   lista lo que se importaría
 
-  Para la app: new [--title t], finalize <id> --duration s --width w --height h, recover, version.
+  Para la app: new [--title t] [--folder f], finalize <id> --duration s --width w --height h, recover, version.
   --json en cualquier comando imprime eventos JSON, uno por línea.";
 
 fn main() -> ExitCode {
@@ -109,7 +110,11 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         }
         "new" => {
             let title = take_opt(&mut args, "--title");
-            let entry = ctx.lib.create(title, now_local())?;
+            let folder = take_opt(&mut args, "--folder");
+            let mut entry = ctx.lib.create(title, now_local())?;
+            if folder.is_some() {
+                entry = ctx.lib.set_folder(&entry.meta.id, folder.as_deref())?;
+            }
             out.entry(&entry);
             Ok(())
         }
@@ -131,6 +136,13 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             let id = positional(&mut args, "id")?;
             let title = args.join(" ");
             let entry = ctx.lib.rename(&id, &title)?;
+            out.entry(&entry);
+            Ok(())
+        }
+        "move" | "mv" => {
+            let id = positional(&mut args, "id")?;
+            let folder = args.join(" ");
+            let entry = ctx.lib.set_folder(&id, Some(&folder))?;
             out.entry(&entry);
             Ok(())
         }

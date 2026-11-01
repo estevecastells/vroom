@@ -193,9 +193,9 @@ private struct LoomImport: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Loom no ofrece exportación masiva ni API pública de descargas. Vroom usa la sesión de tu navegador para listar tus vídeos (también los de carpetas), los descarga con sus subtítulos y los sube a R2. Si lo interrumpes, al volver a lanzarlo sigue donde lo dejó.")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
-            Text("1. Entra en loom.com con tu cuenta.\n2. Abre las herramientas de desarrollo (⌥⌘I) › Application › Cookies › https://www.loom.com.\n3. Copia el valor de connect.sid y pégalo aquí.")
+            Text("1. Entra en loom.com con tu cuenta y abre tu biblioteca.\n2. Abre las herramientas de desarrollo (⌥⌘I) › Network, recarga y haz clic en cualquier petición a «graphql».\n3. En Request Headers, copia el valor completo de «cookie» y pégalo aquí (también vale solo el valor de connect.sid).")
                 .font(.caption).foregroundStyle(.secondary)
-            SecureField("connect.sid", text: $cookie)
+            SecureField("Cookie de loom.com", text: $cookie)
             HStack {
                 if !model.cloudReady {
                     Text("Sin R2 conectado se importa solo a este Mac.").font(.caption).foregroundStyle(.orange)

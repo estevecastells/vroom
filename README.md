@@ -1,9 +1,57 @@
-<img src="docs/images/icon.png" alt="" width="96" align="right">
+<div align="center">
 
-# Vroom
+<img src="docs/images/icon.png" alt="" width="112">
 
-**Record your screen, camera, voice and system audio locally and keep a copy in your own Cloudflare R2 bucket.** A small replacement for the basic Loom workflow: press ⌥⇧R, talk, stop, and the share link is already on your clipboard while the video uploads.
+<h1>Vroom</h1>
 
+<p><strong>Record your screen, a window or an area, with camera, voice and system audio, and keep every video in your own Cloudflare R2 bucket.</strong><br/>
+A small, free replacement for the basic Loom workflow: press ⌥⇧R, talk, stop, and the share link is already on your clipboard while the video uploads.</p>
+
+<a href="https://github.com/estevecastells/vroom/releases/latest/download/Vroom-macos-arm64.zip"><img src="https://img.shields.io/badge/Download_for_Mac-Apple_Silicon-0A84FF?style=for-the-badge&logo=apple&logoColor=white" alt="Download Vroom for Mac (Apple Silicon)" height="44"/></a>
+&nbsp;
+<a href="https://github.com/estevecastells/vroom/releases/latest/download/vroom-windows-x64.zip"><img src="https://img.shields.io/badge/Windows-CLI_(no_recorder_yet)-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download the vroom CLI for Windows" height="44"/></a>
+
+<p>
+<a href="https://github.com/estevecastells/vroom/releases/latest"><img src="https://img.shields.io/github/v/release/estevecastells/vroom?label=latest&style=flat-square" alt="Latest release"/></a>
+<img src="https://img.shields.io/badge/macOS-14%2B-555?style=flat-square&logo=apple" alt="macOS 14 or later"/>
+<a href="https://github.com/estevecastells/vroom/actions/workflows/ci.yml"><img src="https://github.com/estevecastells/vroom/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license"/></a>
+</p>
+
+**Install on a Mac in one line** (no security prompt; verifies the checksum):
+
+</div>
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/estevecastells/vroom/main/scripts/get.sh | bash
+```
+
+<div align="center"><sub>
+The app is not notarized. If you download the zip instead, macOS may refuse to open it the first time: go to System Settings › Privacy &amp; Security and press <b>Open Anyway</b>.
+The Windows download is the <code>vroom</code> command-line tool (library, R2 uploads, links, restore, Loom import). There is no Windows recorder yet.
+</sub></div>
+
+## Vroom vs. Loom
+
+Measured on the same Mac (M5 Pro, 64 GB, macOS 26.6), Loom desktop 0.382.0 against Vroom 0.1.0, both open and not recording, measured one to two minutes after launch. Memory is the sum over every process of the app (physical footprint, as Activity Monitor shows it); CPU is the average over 60 seconds, from the processes' cumulative CPU time.
+
+| | Loom | Vroom |
+|---|---:|---:|
+| App size on disk | 850 MB | 5.4 MB |
+| Processes | 15 | 1 |
+| Memory, idle | 1,250 MB | 19 MB |
+| CPU, idle | 11.9% | 0.01% |
+| CPU / memory while recording 1080p30 + mic | not measured | 2.4% / 15 MB |
+| Extra system components | an audio driver (`LoomAudioDevice`) that stays loaded when Loom is closed | none |
+| Where videos live | Loom's cloud | a folder on your Mac and your own R2 bucket |
+| Cost | per-seat subscription | free; R2 storage is $0.015/GB-month, no egress fees, first 10 GB free |
+
+Loom's recording figures need someone to drive its UI, so they are not in the table yet.
+
+## Features
+
+- **Pick what to record.** The whole screen, one window (click it), or an area (drag it). The camera shows as a round bubble you can drag, and the control bar is never in the video.
+- **Folders.** Organise recordings in folders and subfolders. A Loom import keeps Loom's folder tree and titles.
 - **Local first.** Recordings are plain MP4 files in `~/Movies/Vroom/<id>/`, each with its `meta.json` and thumbnail. You can open, copy or back them up without the app.
 - **Your bucket.** Every recording goes to R2 when it is saved. If the Mac breaks or is stolen, install Vroom on another one and run **Restaurar desde R2**: the whole library comes back, and videos download when you open them.
 - **Light.** 0% CPU and about 18 MB when idle. While recording, ScreenCaptureKit sends frames only when the screen changes, already in the encoder's format, and the hardware H.264/HEVC encoder writes them. The file is fragmented every 4 seconds, so a crash or power cut keeps what was recorded.
@@ -71,7 +119,7 @@ Re-running skips what is already imported, so it can stop and resume. Videos tha
 
 ```text
 vroom list | sync | upload <id>|--pending | share <id> | download <id> | restore
-vroom rename <id> <title> | free <id> | delete <id> [--keep-cloud]
+vroom rename <id> <title> | move <id> [folder/sub] | free <id> | delete <id> [--keep-cloud]
 vroom config | config r2 … | config set library|auto_upload|keep_local_days <value> | check
 vroom loom list | loom import [--no-upload] [--free-local] [--limit N]
 ```

@@ -9,16 +9,38 @@ public struct LibraryView: View {
     @State private var renaming: Entry?
     @State private var newTitle = ""
     @State private var deleting: Entry?
+    @State private var folder: FolderFilter = .all
+    @State private var moving: Entry?
+    @State private var newFolder = ""
 
     public init(model: AppModel) { self.model = model }
 
     private var filtered: [Entry] {
         let q = search.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return model.entries }
-        return model.entries.filter { $0.title.localizedCaseInsensitiveContains(q) }
+        return model.entries.filter { e in
+            folder.contains(e) && (q.isEmpty || e.title.localizedCaseInsensitiveContains(q))
+        }
     }
 
-    public var body: some View {
+    private var sidebar: some View {
+        List(selection: $folder) {
+            Label("Todas", systemImage: "video").tag(FolderFilter.all)
+            Label("Sin carpeta", systemImage: "tray").tag(FolderFilter.none)
+            if !model.folders.isEmpty {
+                Section("Carpetas") {
+                    ForEach(model.folders, id: \.self) { path in
+                        let depth = path.split(separator: "/").count - 1
+                        Label(String(path.split(separator: "/").last ?? ""), systemImage: "folder")
+                            .padding(.leading, CGFloat(depth) * 14)
+                            .tag(FolderFilter.folder(path))
+                    }
+                }
+            }
+        }
+        .navigationSplitViewColumnWidth(min: 170, ideal: 210)
+    }
+
+    private var grid: some View {
         ScrollView {
             if model.entries.isEmpty {
                 ContentUnavailableView("Sin grabaciones", systemImage: "video",
@@ -36,6 +58,15 @@ public struct LibraryView: View {
                 .padding(18)
             }
         }
+    }
+
+    public var body: some View {
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            grid
+        }
+        .navigationTitle(folder.title)
         .searchable(text: $search, placement: .toolbar, prompt: "Buscar")
         .toolbar {
             ToolbarItemGroup {
@@ -76,6 +107,29 @@ public struct LibraryView: View {
             }
             .padding(20)
         }
+        .sheet(item: $moving) { entry in
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Mover a carpeta").font(.headline)
+                HStack {
+                    TextField("Carpeta (usa / para subcarpetas)", text: $newFolder)
+                        .frame(width: 300)
+                        .onSubmit { commitMove(entry) }
+                    if !model.folders.isEmpty {
+                        Menu {
+                            ForEach(model.folders, id: \.self) { f in Button(f) { newFolder = f } }
+                        } label: { Image(systemName: "folder") }
+                        .fixedSize()
+                    }
+                }
+                Text("Déjalo vacío para sacarla de cualquier carpeta.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Cancelar") { moving = nil }.keyboardShortcut(.cancelAction)
+                    Button("Mover") { commitMove(entry) }.keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+        }
         .confirmationDialog(
             "¿Eliminar «\(deleting?.title ?? "")»?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
             presenting: deleting
@@ -101,6 +155,10 @@ public struct LibraryView: View {
             newTitle = entry.title
             renaming = entry
         }
+        Button("Mover a carpeta…") {
+            newFolder = entry.folder ?? ""
+            moving = entry
+        }
         if entry.videoURL != nil { Button("Mostrar en Finder") { model.reveal(entry) } }
         Divider()
         switch entry.status {
@@ -117,10 +175,38 @@ public struct LibraryView: View {
         Button("Eliminar…", role: .destructive) { deleting = entry }
     }
 
+    private func commitMove(_ entry: Entry) {
+        let f = newFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+        if f != (entry.folder ?? "") { model.move(entry, to: f) }
+        moving = nil
+    }
+
     private func commitRename(_ entry: Entry) {
         let t = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !t.isEmpty, t != entry.title { model.rename(entry, to: t) }
         renaming = nil
+    }
+}
+
+enum FolderFilter: Hashable {
+    case all, none
+    case folder(String)
+
+    /// A folder shows its subfolders' recordings too.
+    func contains(_ e: Entry) -> Bool {
+        switch self {
+        case .all: return true
+        case .none: return e.folder == nil
+        case let .folder(path): return e.folder == path || e.folder?.hasPrefix(path + "/") == true
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .all: return "Biblioteca"
+        case .none: return "Sin carpeta"
+        case let .folder(path): return path.replacingOccurrences(of: "/", with: " › ")
+        }
     }
 }
 

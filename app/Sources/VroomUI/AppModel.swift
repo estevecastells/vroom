@@ -491,6 +491,23 @@ public final class AppModel {
         run(["rename", entry.id, title]) { $0.sync() }
     }
 
+    func move(_ entry: Entry, to folder: String) {
+        run(["move", entry.id, folder]) { $0.sync() }
+    }
+
+    /// Every folder and parent folder in use, sorted.
+    var folders: [String] {
+        var all = Set<String>()
+        for case let f? in entries.map(\.folder) {
+            var parts: [Substring] = []
+            for p in f.split(separator: "/") {
+                parts.append(p)
+                all.insert(parts.joined(separator: "/"))
+            }
+        }
+        return all.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
     func freeLocal(_ entry: Entry) {
         run(["free", entry.id]) { $0.show("Copia local borrada; sigue en R2") }
     }
