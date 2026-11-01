@@ -3,7 +3,9 @@
 //! duration. Loom's manifests are static and generated, so this reads tags and
 //! attributes rather than pulling in an XML parser.
 
+use super::MAX_SEGMENTS;
 use vroom_core::i18n::t;
+use vroom_core::tr;
 
 #[derive(Debug, Clone, Default)]
 pub struct Rep {
@@ -111,10 +113,15 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
                     return Err(t("plantilla DASH no soportada"));
                 }
                 if tpl.duration > 0 {
-                    let secs = total.ok_or_else(|| t("lista DASH sin duración"))?;
+                    let secs =
+                        total.filter(|s| s.is_finite() && *s > 0.0).ok_or_else(|| t("lista DASH sin duración"))?;
                     let len = tpl.duration as f64 / tpl.timescale.max(1) as f64;
-                    let count = (secs / len).ceil() as u64;
-                    tpl.times = (0..count).map(|i| i * tpl.duration).collect();
+                    let count = (secs / len).ceil();
+                    // Checked before allocating: the manifest comes from the network.
+                    if count > MAX_SEGMENTS as f64 {
+                        return Err(too_many());
+                    }
+                    tpl.times = (0..count as u64).map(|i| i * tpl.duration).collect();
                 }
                 match current.as_mut() {
                     Some(rep) => rep.template = tpl,
@@ -132,9 +139,12 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
                     Some(t) => t,
                     None => tpl.times.last().map_or(0, |last| last + d),
                 };
+                if repeat >= (MAX_SEGMENTS - tpl.times.len().min(MAX_SEGMENTS)) as u64 {
+                    return Err(too_many());
+                }
                 for _ in 0..=repeat {
                     tpl.times.push(time);
-                    time += d;
+                    time = time.checked_add(d).ok_or_else(|| t("lista DASH no válida"))?;
                 }
             }
             _ => {}
@@ -147,6 +157,10 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
         return Err(t("lista DASH vacía"));
     }
     Ok(reps)
+}
+
+fn too_many() -> String {
+    tr!("lista con demasiados segmentos ({n})", n = format!(">{MAX_SEGMENTS}"))
 }
 
 /// The best video and audio Representations, by bandwidth.
@@ -243,5 +257,9 @@ mod tests {
     fn refuses_what_it_cannot_download() {
         assert!(parse(r#"<MPD><Period><AdaptationSet><ContentProtection/></AdaptationSet></Period></MPD>"#).is_err());
         assert!(parse(r#"<MPD><Period></Period></MPD>"#).is_err());
+        let huge = r#"<MPD><Period><AdaptationSet mimeType="video/webm"><Representation id="v"><SegmentTemplate media="$Number$" initialization="i"><SegmentTimeline><S t="0" d="1" r="18446744073709551614"/></SegmentTimeline></SegmentTemplate></Representation></AdaptationSet></Period></MPD>"#;
+        assert!(parse(huge).is_err());
+        let tiny = r#"<MPD mediaPresentationDuration="PT999999999S"><Period><AdaptationSet mimeType="video/webm"><Representation id="v"><SegmentTemplate media="$Number$" initialization="i" timescale="1000000" duration="1"/></Representation></AdaptationSet></Period></MPD>"#;
+        assert!(parse(tiny).is_err());
     }
 }
