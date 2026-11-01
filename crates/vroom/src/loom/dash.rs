@@ -72,6 +72,17 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
     // Set-level defaults; a Representation's own values win.
     let (mut set_content, mut set_mime, mut set_tpl) = (String::new(), String::new(), None::<Template>);
     let mut current: Option<Rep> = None;
+    // Segment entries held across every template and copy of one, so that many
+    // Representations cannot add up to what one is not allowed.
+    let mut held = 0usize;
+    let mut hold = |n: usize| -> Result<(), String> {
+        held = held.saturating_add(n);
+        if held > MAX_HELD {
+            Err(too_many())
+        } else {
+            Ok(())
+        }
+    };
     for (name, attrs, closing, empty) in tags(mpd) {
         match (name, closing) {
             ("Period", true) => break,
@@ -81,6 +92,10 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
                 set_tpl = None;
             }
             ("Representation", false) => {
+                if reps.len() >= MAX_REPRESENTATIONS {
+                    return Err(t("lista DASH no válida"));
+                }
+                hold(set_tpl.as_ref().map_or(0, |tpl| tpl.times.len()))?;
                 let mime = attr(attrs, "mimeType").map(str::to_string).unwrap_or_else(|| set_mime.clone());
                 let content = if set_content.is_empty() {
                     mime.split('/').next().unwrap_or_default().to_string()
@@ -121,6 +136,7 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
                     if count > MAX_SEGMENTS as f64 {
                         return Err(too_many());
                     }
+                    hold(count as usize)?;
                     tpl.times = (0..count as u64).map(|i| i * tpl.duration).collect();
                 }
                 match current.as_mut() {
@@ -142,6 +158,7 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
                 if repeat >= (MAX_SEGMENTS - tpl.times.len().min(MAX_SEGMENTS)) as u64 {
                     return Err(too_many());
                 }
+                hold(repeat as usize + 1)?;
                 for _ in 0..=repeat {
                     tpl.times.push(time);
                     time = time.checked_add(d).ok_or_else(|| t("lista DASH no válida"))?;
@@ -158,6 +175,11 @@ pub fn parse(mpd: &str) -> Result<Vec<Rep>, String> {
     }
     Ok(reps)
 }
+
+/// Loom has one audio and a few video Representations.
+const MAX_REPRESENTATIONS: usize = 64;
+/// Segment entries across the whole manifest.
+const MAX_HELD: usize = 4 * MAX_SEGMENTS;
 
 fn too_many() -> String {
     tr!("lista con demasiados segmentos ({n})", n = format!(">{MAX_SEGMENTS}"))
@@ -261,5 +283,12 @@ mod tests {
         assert!(parse(huge).is_err());
         let tiny = r#"<MPD mediaPresentationDuration="PT999999999S"><Period><AdaptationSet mimeType="video/webm"><Representation id="v"><SegmentTemplate media="$Number$" initialization="i" timescale="1000000" duration="1"/></Representation></AdaptationSet></Period></MPD>"#;
         assert!(parse(tiny).is_err());
+        // Each Representation under the limit, all of them together over it.
+        let rep = r#"<Representation id="v"><SegmentTemplate media="$Number$" initialization="i"><SegmentTimeline><S t="0" d="1" r="40000"/></SegmentTimeline></SegmentTemplate></Representation>"#;
+        let many = format!(
+            r#"<MPD><Period><AdaptationSet mimeType="video/webm">{}</AdaptationSet></Period></MPD>"#,
+            rep.repeat(6)
+        );
+        assert!(parse(&many).is_err());
     }
 }
