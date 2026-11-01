@@ -1045,7 +1045,7 @@ impl VroomApp {
                             run = delete(&[]);
                         }
                     } else {
-                        ui.label(tr!("«{path}» contiene {n} grabaciones.", path, n = inside));
+                        ui.label(tr!("«{path}» contiene {n} grabaciones.", path = path, n = inside));
                         ui.label(t("Si eliminas solo la carpeta, las grabaciones pasan a la carpeta de arriba."));
                         ui.vertical(|ui| {
                             if inside_in_cloud {
