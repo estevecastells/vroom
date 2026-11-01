@@ -102,6 +102,13 @@ fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: 
         return Err(format!("ffmpeg: {}", err.trim()));
     }
 
+    // On silence Whisper invents text ("Thank you."): no voice, no captions.
+    let samples = read_wav(&wav.0)?;
+    if voiced_seconds(&samples) < 0.3 {
+        return Err("no se oye voz en la grabación; no hay subtítulos".into());
+    }
+    let duration = samples.len() as f64 / 16_000.0;
+
     let base = dir.join(".captions");
     let vtt = Temp(base.with_extension("vtt"));
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
@@ -131,7 +138,7 @@ fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: 
         return Err(format!("whisper-cli falló: {tail}"));
     }
     let text = std::fs::read_to_string(&vtt.0).map_err(|e| e.to_string())?;
-    std::fs::write(&vtt.0, shorten_cues(&text)).map_err(|e| e.to_string())?;
+    std::fs::write(&vtt.0, shorten_cues(&text, duration)).map_err(|e| e.to_string())?;
     std::fs::rename(&vtt.0, dir.join(CAPTIONS)).map_err(|e| e.to_string())?;
     progress(100);
     Ok(())
@@ -139,7 +146,7 @@ fn transcribe(ctx: &Ctx, id: &str, tools: &Tools, language: &str, mut progress: 
 
 /// Whisper's cues are whole sentences, often too long to read on screen. Split
 /// them between words into about two lines each, timed by their share of the text.
-fn shorten_cues(vtt: &str) -> String {
+fn shorten_cues(vtt: &str, duration: f64) -> String {
     const MAX: usize = 84;
     let mut out = String::from("WEBVTT\n");
     for block in vtt.split("\n\n") {
@@ -147,6 +154,8 @@ fn shorten_cues(vtt: &str) -> String {
         let Some((start, end)) = lines.next().and_then(|l| l.split_once(" --> ")) else { continue };
         let text = lines.collect::<Vec<_>>().join(" ");
         let (Some(t0), Some(t1)) = (parse_time(start), parse_time(end)) else { continue };
+        // Whisper works in 30 s windows and can stamp past the end of the audio.
+        let t1 = t1.min(duration.max(t0));
         // As many cues as needed, each about the same length, so none is a stray word or two.
         let n = text.len().div_ceil(MAX).max(1);
         let target = text.len() / n;
@@ -170,6 +179,24 @@ fn shorten_cues(vtt: &str) -> String {
         }
     }
     out
+}
+
+/// The samples of the 16-bit mono WAV that ffmpeg wrote.
+fn read_wav(path: &Path) -> Result<Vec<i16>, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let data = bytes.windows(4).position(|w| w == b"data").map(|i| i + 8).ok_or("audio extraído no válido")?;
+    Ok(bytes[data.min(bytes.len())..].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect())
+}
+
+/// Seconds of 30 ms windows louder than -45 dBFS: speech, not room noise.
+fn voiced_seconds(samples: &[i16]) -> f64 {
+    const WINDOW: usize = 480;
+    let threshold = 32768.0 * 10f64.powf(-45.0 / 20.0);
+    let voiced = samples
+        .chunks(WINDOW)
+        .filter(|w| (w.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / w.len() as f64).sqrt() > threshold)
+        .count();
+    voiced as f64 * WINDOW as f64 / 16_000.0
 }
 
 fn parse_time(s: &str) -> Option<f64> {
@@ -301,7 +328,7 @@ mod tests {
     fn long_cues_are_split_between_words() {
         let words = "uno dos tres cuatro cinco seis siete ocho nueve diez ".repeat(4);
         let vtt = format!("WEBVTT\n\n00:00:01.000 --> 00:00:07.000\n {}\n", words.trim());
-        let short = shorten_cues(&vtt);
+        let short = shorten_cues(&vtt, 60.0);
         let cues: Vec<&str> = short.split("\n\n").skip(1).collect();
         assert_eq!(cues.len(), 3, "{short}");
         assert!(cues[0].starts_with("00:00:01.000 --> "));
@@ -309,5 +336,19 @@ mod tests {
         let lens: Vec<usize> = cues.iter().map(|c| c.lines().nth(1).unwrap().len()).collect();
         assert!(lens.iter().all(|l| (50..=84).contains(l)), "{lens:?}");
         assert_eq!(format_time(parse_time("01:02:03.456").unwrap()), "01:02:03.456");
+    }
+
+    #[test]
+    fn cues_end_with_the_audio() {
+        let vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:29.980\nHola.\n";
+        assert!(shorten_cues(vtt, 5.0).contains("00:00:00.000 --> 00:00:05.000\nHola."));
+    }
+
+    #[test]
+    fn silence_has_no_voice() {
+        assert_eq!(voiced_seconds(&vec![0i16; 16_000 * 5]), 0.0);
+        assert_eq!(voiced_seconds(&vec![3i16; 16_000 * 5]), 0.0);
+        let speech: Vec<i16> = (0..16_000).map(|i| ((i as f64 * 0.05).sin() * 8000.0) as i16).collect();
+        assert!(voiced_seconds(&speech) > 0.9);
     }
 }
