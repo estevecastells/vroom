@@ -89,6 +89,14 @@ pub struct State {
     pub multipart: Option<Multipart>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// `captions_hash` of the captions.vtt in R2; a new transcription differs and goes up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captions_uploaded: Option<u64>,
+}
+
+/// FNV-1a: stable across builds, enough to notice that a file changed.
+pub fn captions_hash(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3))
 }
 
 /// A multipart upload in progress, so it can resume after a crash or a reboot.
@@ -118,6 +126,8 @@ pub struct Entry {
     pub video: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumb: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captions: Option<PathBuf>,
     #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
     pub uploaded_at: Option<OffsetDateTime>,
     /// 0…1 while uploading.
@@ -413,10 +423,12 @@ impl Library {
             _ => None,
         };
         let thumb = dir.join(THUMB);
+        let captions = dir.join(CAPTIONS);
         Ok(Entry {
             status,
             video: has_video.then_some(video),
             thumb: thumb.is_file().then_some(thumb),
+            captions: captions.is_file().then_some(captions),
             uploaded_at: state.uploaded_at,
             progress,
             error: state.last_error,
@@ -433,6 +445,20 @@ impl Library {
     }
 
     /// Recordings whose video or metadata still has to go up.
+    /// The recording is in R2 but its local captions.vtt is newer than the one there.
+    pub fn captions_pending(&self, id: &str) -> bool {
+        let state = self.state(id);
+        let Some(uploaded_at) = state.uploaded_at else { return false };
+        let Ok(path) = self.dir(id).map(|d| d.join(CAPTIONS)) else { return false };
+        match state.captions_uploaded {
+            Some(hash) => std::fs::read(&path).is_ok_and(|b| captions_hash(&b) != hash),
+            // Uploaded before this was tracked: captions then went up with the video.
+            None => {
+                std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| OffsetDateTime::from(t) > uploaded_at)
+            }
+        }
+    }
+
     pub fn pending_upload(&self) -> Result<Vec<String>, String> {
         Ok(self
             .list()?
@@ -441,7 +467,7 @@ impl Library {
                 Status::Local | Status::Uploading => e.video.is_some(),
                 Status::Synced | Status::Cloud => {
                     let s = self.state(&e.meta.id);
-                    s.meta_dirty || !s.meta_private
+                    s.meta_dirty || !s.meta_private || self.captions_pending(&e.meta.id)
                 }
                 Status::Recording => false,
             })

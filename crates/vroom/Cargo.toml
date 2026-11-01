@@ -9,6 +9,7 @@ repository.workspace = true
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11.1"
 time = { version = "0.3.55", features = ["formatting", "parsing", "local-offset"] }
 ureq = { version = "3.5.0", features = ["json"] }
 url = "2.5.8"

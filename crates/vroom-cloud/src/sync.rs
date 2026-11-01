@@ -4,8 +4,8 @@
 use crate::r2::{MAX_PRESIGN, R2};
 use std::collections::BTreeSet;
 use time::OffsetDateTime;
-use vroom_core::layout::{self, AFTER_VIDEO, META, PAGE, THUMB, VIDEO};
-use vroom_core::library::{Library, State};
+use vroom_core::layout::{self, AFTER_VIDEO, CAPTIONS, META, PAGE, THUMB, VIDEO};
+use vroom_core::library::{captions_hash, Library, State};
 use vroom_core::share;
 
 /// Upload everything of one recording that is not in R2 yet: the video (resuming
@@ -22,6 +22,7 @@ pub fn upload(r2: &R2, lib: &Library, id: &str, progress: impl FnMut(u64, u64)) 
         latest.meta_private = true;
         latest.meta_dirty = false;
         latest.multipart = None;
+        latest.captions_uploaded = state.captions_uploaded.or(latest.captions_uploaded);
     }
     lib.write_state(id, &latest)?;
     result
@@ -58,12 +59,14 @@ fn upload_inner(
         )?;
     }
     let has_thumb = dir.join(THUMB).is_file();
-    let has_captions = dir.join(layout::CAPTIONS).is_file();
+    let has_captions = dir.join(CAPTIONS).is_file();
+    let captions_needed = video_needed || lib.captions_pending(id);
     for file in AFTER_VIDEO {
         let bytes = match file {
             PAGE => share::page(&meta, has_thumb, has_captions).into_bytes(),
-            // Thumbnail and captions only change with the video.
-            _ if !video_needed => continue,
+            // The thumbnail only changes with the video; captions also with a new transcription.
+            THUMB if !video_needed => continue,
+            CAPTIONS if !captions_needed => continue,
             _ => match std::fs::read(dir.join(file)) {
                 Ok(b) => b,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -71,6 +74,9 @@ fn upload_inner(
             },
         };
         r2.put(&layout::key(&r2.prefix, id, file), &bytes, layout::content_type(file))?;
+        if file == CAPTIONS {
+            state.captions_uploaded = Some(captions_hash(&bytes));
+        }
     }
     // Last: the private metadata marks the upload complete.
     let json = serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?;

@@ -4,8 +4,10 @@
 mod loom;
 mod out;
 mod secret;
+mod transcribe;
 
 use out::Out;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use time::OffsetDateTime;
 use vroom_cloud::{sync, R2};
@@ -28,6 +30,8 @@ vroom: grabaciones locales con copia en Cloudflare R2
   vroom folders                     lista las carpetas
   vroom folder create <ruta> | rename <ruta> <nueva> | delete <ruta>
                                     (al borrar, las grabaciones pasan a la carpeta de arriba)
+  vroom transcribe <id>... | --missing [--language es] [--model ruta.bin]
+                                    subtítulos con Whisper en local (usa los modelos de MacWhisper)
   vroom free <id>                   borra el vídeo local de una grabación ya subida
   vroom delete <id> [--keep-cloud]  borra la grabación (también de R2, salvo --keep-cloud)
 
@@ -269,6 +273,7 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         }
         "config" => config(out, &mut ctx, args),
         "loom" => loom::run(out, &ctx, args),
+        "transcribe" => transcribe::run(out, &ctx, args),
         other => Err(format!("comando desconocido: {other}\n\n{USAGE}")),
     }
 }
@@ -410,6 +415,18 @@ pub(crate) fn read_stdin_line() -> Result<String, String> {
     let mut s = String::new();
     std::io::stdin().read_line(&mut s).map_err(|e| e.to_string())?;
     Ok(s.trim().to_string())
+}
+
+/// A program from `$env`, the PATH, or Homebrew (apps launched from Finder get a minimal PATH).
+pub(crate) fn find_tool(name: &str, env: &str) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os(env).map(PathBuf::from).filter(|p| p.is_file()) {
+        return Some(p);
+    }
+    let name = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    let mut dirs: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+    dirs.into_iter().map(|d| d.join(&name)).find(|p| p.is_file())
 }
 
 fn now_local() -> OffsetDateTime {

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use time::macros::datetime;
 use vroom_cloud::{sync, R2};
-use vroom_core::layout::{META, PAGE, THUMB, VIDEO};
+use vroom_core::layout::{CAPTIONS, META, PAGE, THUMB, VIDEO};
 use vroom_core::{Library, R2Config, Status};
 
 #[derive(Default)]
@@ -262,6 +262,32 @@ fn small_upload_restore_and_delete() {
 
 /// Recordings uploaded before the private area (public meta.json) restore
 /// fine and get migrated by the next upload.
+#[test]
+fn new_captions_go_up_after_the_video() {
+    let (endpoint, store) = serve();
+    let r2 = r2(&endpoint);
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = Library::open(tmp.path().join("a")).unwrap();
+    let (id, _) = recording(&lib, 1000);
+    sync::upload(&r2, &lib, &id, |_, _| {}).unwrap();
+    let page = |store: &Shared| {
+        String::from_utf8_lossy(&store.lock().unwrap().objects[&format!("team/recordings/{id}/{PAGE}")]).to_string()
+    };
+    assert!(!page(&store).contains("<track"));
+
+    // A transcription after the upload, then a new one: each goes up once.
+    for text in ["WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHola\n", "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nAdiós\n"]
+    {
+        std::fs::write(lib.dir(&id).unwrap().join(CAPTIONS), text).unwrap();
+        assert!(lib.captions_pending(&id), "{text}");
+        assert_eq!(lib.pending_upload().unwrap(), vec![id.clone()]);
+        sync::upload(&r2, &lib, &id, |_, _| {}).unwrap();
+        assert!(lib.pending_upload().unwrap().is_empty());
+        assert_eq!(store.lock().unwrap().objects[&format!("team/recordings/{id}/{CAPTIONS}")], text.as_bytes());
+        assert!(page(&store).contains("<track"));
+    }
+}
+
 #[test]
 fn legacy_public_meta_is_migrated() {
     let (endpoint, store) = serve();

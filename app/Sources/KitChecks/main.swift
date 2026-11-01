@@ -67,5 +67,10 @@ check(try {
     return f == ["Clientes", "Clientes/Acme"]
 }(), "decodes folders")
 
+check(try {
+    guard case let .transcriber(model, whisper) = try decode("transcriber.json") else { return false }
+    return model?.hasSuffix("ggml-large-v3-turbo-q5_0.bin") == true && whisper == "/opt/homebrew/bin/whisper-cli"
+}(), "decodes the transcriber status")
+
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

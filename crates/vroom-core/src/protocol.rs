@@ -30,6 +30,13 @@ pub enum Event {
         library: String,
         has_secret: bool,
     },
+    /// What `transcribe` would use; absent when it is missing.
+    Transcriber {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        whisper: Option<String>,
+    },
     /// Bytes of one recording transferred so far.
     Progress {
         id: String,

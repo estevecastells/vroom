@@ -28,6 +28,8 @@ public struct Entry: Codable, Equatable, Identifiable, Sendable {
     public var dir: String
     public var video: String?
     public var thumb: String?
+    /// captions.vtt, once transcribed (or imported from Loom).
+    public var captions: String?
     public var uploadedAt: Date?
     public var progress: Double?
     public var error: String?
@@ -77,6 +79,8 @@ public enum Event: Decodable, Equatable, Sendable {
     case entries([Entry])
     case entry(Entry)
     case folders([String])
+    /// What `vroom transcribe` would use; nil when missing.
+    case transcriber(model: String?, whisper: String?)
     case config(ConfigInfo)
     case progress(id: String, done: Int64, total: Int64)
     case done(id: String, what: String)
@@ -87,7 +91,7 @@ public enum Event: Decodable, Equatable, Sendable {
 
     private enum Keys: String, CodingKey {
         case type, version, `protocol`, entries, entry, folders, config, path, library, hasSecret, id, done, total, what, url,
-            expiresAt, message
+            expiresAt, message, model, whisper
     }
 
     public init(from decoder: Decoder) throws {
@@ -98,6 +102,9 @@ public enum Event: Decodable, Equatable, Sendable {
         case "entries": self = .entries(try c.decode([Entry].self, forKey: .entries))
         case "entry": self = .entry(try c.decode(Entry.self, forKey: .entry))
         case "folders": self = .folders(try c.decode([String].self, forKey: .folders))
+        case "transcriber":
+            self = .transcriber(model: try c.decodeIfPresent(String.self, forKey: .model),
+                                whisper: try c.decodeIfPresent(String.self, forKey: .whisper))
         case "config":
             self = .config(ConfigInfo(
                 config: try c.decode(Config.self, forKey: .config),

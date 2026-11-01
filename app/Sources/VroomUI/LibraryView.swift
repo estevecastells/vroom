@@ -91,8 +91,8 @@ public struct LibraryView: View {
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 16)], spacing: 18) {
                     ForEach(filtered) { entry in
-                        Card(entry: entry, progress: model.transfers[entry.id], cloudReady: model.cloudReady,
-                             copyLink: { model.copyLink(entry) })
+                        Card(entry: entry, progress: model.transfers[entry.id], transcribing: model.transcribing[entry.id],
+                             cloudReady: model.cloudReady, copyLink: { model.copyLink(entry) })
                             .draggable(entry.id)
                             .onTapGesture(count: 2) { model.play(entry) }
                             .contextMenu { menu(for: entry) }
@@ -203,6 +203,10 @@ public struct LibraryView: View {
             moving = entry
         }
         if entry.videoURL != nil { Button("Mostrar en Finder") { model.reveal(entry) } }
+        if entry.videoURL != nil && entry.status != .recording {
+            Button(entry.captions == nil ? "Transcribir" : "Volver a transcribir") { model.transcribe(entry) }
+                .disabled(!model.canTranscribe || model.transcribing[entry.id] != nil)
+        }
         Divider()
         switch entry.status {
         case .local, .uploading:
@@ -308,6 +312,7 @@ enum FolderFilter: Hashable {
 private struct Card: View {
     let entry: Entry
     let progress: Double?
+    let transcribing: Double?
     let cloudReady: Bool
     let copyLink: () -> Void
     @State private var hover = false
@@ -331,6 +336,15 @@ private struct Card: View {
                         .padding(6)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
+                if let t = transcribing {
+                    Text(t > 0 ? "Transcribiendo \(Int(t * 100)) %" : "Transcripción en cola")
+                        .font(.caption2.monospacedDigit())
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.white)
+                        .padding(6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
                 if let p = progress ?? (entry.status == .uploading ? entry.progress : nil) {
                     ProgressView(value: p).tint(.white).padding(8)
                         .frame(maxHeight: .infinity, alignment: .bottom)
@@ -344,6 +358,9 @@ private struct Card: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
+                if entry.captions != nil {
+                    Image(systemName: "captions.bubble").font(.caption2).foregroundStyle(.secondary).help("Con subtítulos")
+                }
                 if entry.source == .loom { Text("Loom").font(.caption2).foregroundStyle(.secondary) }
                 StatusIcon(entry: entry, progress: nil)
             }

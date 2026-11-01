@@ -14,6 +14,7 @@ public struct SettingsView: View {
             RecordingSettings(model: model).tabItem { Label("Grabación", systemImage: "record.circle") }
             CloudSettings(model: model).tabItem { Label("Cloudflare R2", systemImage: "icloud") }
             LibrarySettings(model: model).tabItem { Label("Biblioteca", systemImage: "folder") }
+            TranscriptionSettings(model: model).tabItem { Label("Transcripción", systemImage: "captions.bubble") }
             LoomImport(model: model).tabItem { Label("Importar de Loom", systemImage: "square.and.arrow.down") }
         }
         .frame(width: 560)
@@ -135,6 +136,52 @@ private struct CloudSettings: View {
             message = error ?? "Conectado: R2 responde y las credenciales funcionan."
             if error == nil { secret = "" }
         }
+    }
+}
+
+@MainActor
+private struct TranscriptionSettings: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Transcribir al terminar cada grabación", isOn: $model.prefs.transcribe)
+                    .disabled(!model.canTranscribe)
+                Text("Los subtítulos se generan en este Mac con Whisper: el audio no sale de aquí. Se ven en la página para compartir y puedes rehacerlos desde la biblioteca (clic derecho → Transcribir).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Modelo") {
+                if let m = model.transcriberModel {
+                    LabeledContent("En uso") {
+                        Text(URL(fileURLWithPath: m).lastPathComponent).foregroundStyle(.secondary)
+                    }
+                    if m.contains("/MacWhisper/") {
+                        Text("Es el modelo de MacWhisper; Vroom lo usa sin copiarlo.").font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("No hay ningún modelo todavía.").foregroundStyle(.secondary)
+                }
+                if let p = model.modelDownload {
+                    ProgressView(value: p) { Text("Descargando modelo…") }
+                } else if !(model.transcriberModel?.contains("/Vroom/models/") ?? false) {
+                    Button("Descargar Whisper large-v3-turbo (574 MB)") { model.downloadModel() }
+                    Text("Modelo abierto de OpenAI, del repositorio de whisper.cpp en Hugging Face. Se comprueba su huella SHA-256 antes de usarlo; es más rápido que el de MacWhisper con la misma calidad.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("whisper.cpp") {
+                if let w = model.whisperPath {
+                    LabeledContent("Programa") { Text(w).foregroundStyle(.secondary) }
+                } else {
+                    Text("Falta whisper.cpp. Instálalo desde Terminal:")
+                    Text("brew install whisper-cpp ffmpeg").font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                    Button("Comprobar de nuevo") { Task { await model.reloadTranscriber() } }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .task { await model.reloadTranscriber() }
     }
 }
 

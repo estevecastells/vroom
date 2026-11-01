@@ -52,6 +52,7 @@ Loom's recording figures need someone to drive its UI, so they are not in the ta
 
 - **Pick what to record.** The whole screen, one window (click it), or an area (drag it). The camera shows as a round bubble you can drag, and the control bar is never in the video.
 - **Folders.** Organise recordings in folders and subfolders. A Loom import keeps Loom's folder tree and titles.
+- **Subtitles on your Mac.** When a recording ends, Whisper (whisper.cpp) transcribes it on this Mac and the share page shows the subtitles. The audio never leaves the computer. It uses MacWhisper's models if you have them, or downloads the open large-v3-turbo model (574 MB, SHA-256 checked); a 2.5-minute video takes about 11 seconds on an M5 Pro.
 - **Local first.** Recordings are plain MP4 files in `~/Movies/Vroom/<id>/`, each with its `meta.json` and thumbnail. You can open, copy or back them up without the app.
 - **Your bucket.** Every recording goes to R2 when it is saved. If the Mac breaks or is stolen, install Vroom on another one and run **Restaurar desde R2**: the whole library comes back, and videos download when you open them.
 - **Light.** 0% CPU and about 18 MB when idle. While recording, ScreenCaptureKit sends frames only when the screen changes, already in the encoder's format, and the hardware H.264/HEVC encoder writes them. The file is fragmented every 4 seconds, so a crash or power cut keeps what was recorded.
@@ -99,7 +100,7 @@ vroom config r2 --account-id <id> --bucket vroom --access-key-id <key> [--public
 # then paste the Secret Access Key
 ```
 
-Objects are stored as `recordings/<id>/{video.mp4, thumb.jpg, captions.vtt, index.html, meta.json}`. `meta.json` is uploaded last, so a restore only picks up recordings that finished uploading. Ids carry 100 random bits, so public links can't be guessed.
+Public objects are stored as `recordings/<id>/{video.mp4, thumb.jpg, captions.vtt, index.html}`. Titles, folders and Loom ids are not public: they go to `library/<random>/meta/<id>.json`, uploaded last, so a restore only picks up recordings that finished uploading. Ids carry 100 random bits, so public links can't be guessed.
 
 ## Import from Loom
 
@@ -115,12 +116,25 @@ VROOM_LOOM_COOKIE='<connect.sid>' vroom loom import --free-local   # --free-loca
 
 Re-running skips what is already imported, so it can stop and resume. Videos that Loom serves only as HLS (some long ones) need `ffmpeg` (`brew install ffmpeg`). Only videos you created are listed, so a workspace admin has to run it for each member.
 
+## Subtitles
+
+Vroom runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) locally:
+
+```sh
+brew install whisper-cpp ffmpeg
+vroom transcribe --download-model     # large-v3-turbo (574 MB); or base, small, large-v3-turbo
+vroom transcribe <id>                 # or --missing for every recording without subtitles
+```
+
+With MacWhisper installed, its models are used without downloading anything. In the app: **Ajustes › Transcripción**, and right-click › **Transcribir** in the library. A new transcription of a recording that is already in R2 goes up on the next sync.
+
 ## CLI
 
 ```text
 vroom list | sync | upload <id>|--pending | share <id> | download <id> | restore
 vroom rename <id> <title> | move <id> [folder/sub] | free <id> | delete <id> [--keep-cloud]
 vroom config | config r2 … | config set library|auto_upload|keep_local_days <value> | check
+vroom transcribe <id>|--missing [--language es] [--model file.bin] | transcribe --download-model [name] | --status
 vroom loom list | loom import [--no-upload] [--free-local] [--limit N]
 ```
 

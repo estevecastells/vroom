@@ -7,11 +7,11 @@
 //! import skips what is already in the library, so it can stop and resume.
 
 use crate::out::Out;
-use crate::{take_flag, take_opt, Ctx};
+use crate::{find_tool, take_flag, take_opt, Ctx};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use time::OffsetDateTime;
 use ureq::config::Config;
@@ -491,7 +491,8 @@ impl Loom {
     /// in the playlist's query must go on every segment, so fetch the segments
     /// here, join them, and let ffmpeg remux to MP4 offline.
     fn download_hls(&self, master_url: &str, dir: &Path, dest: &Path) -> Result<(), String> {
-        let ffmpeg = find_ffmpeg().ok_or("este vídeo solo está en streaming (HLS); instala ffmpeg para importarlo")?;
+        let ffmpeg = find_tool("ffmpeg", "VROOM_FFMPEG")
+            .ok_or("este vídeo solo está en streaming (HLS); instala ffmpeg para importarlo")?;
         let master = String::from_utf8_lossy(&self.get_bytes(master_url)?).into_owned();
         let (video_uri, audio_uri) = if master.contains("#EXT-X-STREAM-INF") {
             let (v, a) = parse_master(&master);
@@ -717,15 +718,6 @@ fn sign(base: &str, uri: &str) -> String {
     } else {
         format!("{dir}/{uri}?{query}")
     }
-}
-
-fn find_ffmpeg() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    let mut dirs: Vec<PathBuf> =
-        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-    // Apps launched from Finder get a minimal PATH.
-    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
-    dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
 #[cfg(test)]

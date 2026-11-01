@@ -32,6 +32,8 @@ public struct Prefs: Equatable {
     var fps: Int
     var codec: RecorderSettings.Codec
     var countdown: Bool
+    /// Subtitles with Whisper on this Mac when a recording ends.
+    var transcribe: Bool
 
     static func load(_ d: UserDefaults = .standard) -> Prefs {
         Prefs(
@@ -43,7 +45,8 @@ public struct Prefs: Equatable {
             maxHeight: d.object(forKey: "maxHeight") as? Int ?? 1080,
             fps: d.object(forKey: "fps") as? Int ?? 30,
             codec: d.string(forKey: "codec").flatMap(RecorderSettings.Codec.init(rawValue:)) ?? .h264,
-            countdown: d.object(forKey: "countdown") as? Bool ?? true)
+            countdown: d.object(forKey: "countdown") as? Bool ?? true,
+            transcribe: d.object(forKey: "transcribe") as? Bool ?? true)
     }
 
     func save(_ d: UserDefaults = .standard) {
@@ -57,6 +60,7 @@ public struct Prefs: Equatable {
         d.set(fps, forKey: "fps")
         d.set(codec.rawValue, forKey: "codec")
         d.set(countdown, forKey: "countdown")
+        d.set(transcribe, forKey: "transcribe")
     }
 }
 
@@ -73,6 +77,13 @@ public final class AppModel {
     /// Upload/download progress by recording id, 0…1.
     private(set) var transfers: [String: Double] = [:]
     private(set) var syncing = false
+    /// The Whisper model and whisper-cli `vroom transcribe` would use; nil when missing.
+    private(set) var transcriberModel: String?
+    private(set) var whisperPath: String?
+    /// Transcription progress by recording id, 0…1; queued ones are at 0.
+    private(set) var transcribing: [String: Double] = [:]
+    /// 0…1 while the Whisper model downloads.
+    private(set) var modelDownload: Double?
     private(set) var toast: String?
     private(set) var lastError: String? {
         didSet { if let lastError { log.error("\(lastError, privacy: .public)") } }
@@ -95,6 +106,7 @@ public final class AppModel {
     private var startTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     private var syncAgain = false
+    private var transcribeQueue: [String] = []
     private let pathMonitor = NWPathMonitor()
     private var hotKey: HotKey?
 
@@ -117,6 +129,7 @@ public final class AppModel {
         _ = try? await cli.run(["recover"])
         await reloadConfig()
         await refresh()
+        await reloadTranscriber()
         // Uploads left over from last time (no network, app quit) resume on their own.
         sync()
         // Retry when the network comes back rather than polling.
@@ -381,6 +394,7 @@ public final class AppModel {
     /// Like Loom: the link is on the clipboard as soon as the recording stops;
     /// it works once the upload (already running) finishes.
     private func afterRecording(_ entry: Entry) async {
+        if prefs.transcribe && canTranscribe { transcribe(entry) }
         guard cloudReady, config?.config.autoUpload == true else {
             show("Grabación guardada")
             return
@@ -536,6 +550,75 @@ public final class AppModel {
                 lastError = error.localizedDescription
             }
             await refresh()
+        }
+    }
+
+    // MARK: Transcription
+
+    var canTranscribe: Bool { transcriberModel != nil && whisperPath != nil }
+
+    func reloadTranscriber() async {
+        guard let cli, let events = try? await cli.run(["transcribe", "--status"]) else { return }
+        for case let .transcriber(model, whisper) in events {
+            transcriberModel = model
+            whisperPath = whisper
+        }
+    }
+
+    /// Queue a recording; one transcription runs at a time, since each takes the whole GPU.
+    func transcribe(_ entry: Entry) {
+        guard canTranscribe, entry.videoURL != nil, transcribing[entry.id] == nil else { return }
+        transcribing[entry.id] = 0
+        transcribeQueue.append(entry.id)
+        if transcribeQueue.count == 1 { Task { await drainTranscriptions() } }
+    }
+
+    private func drainTranscriptions() async {
+        guard let cli else { return }
+        while let id = transcribeQueue.first {
+            do {
+                try await cli.stream(["transcribe", id]) { event in
+                    Task { @MainActor [weak self] in
+                        switch event {
+                        case let .progress(id, done, total) where total > 0:
+                            self?.transcribing[id] = Double(done) / Double(total)
+                        case let .warning(_, message):
+                            self?.lastError = "Transcripción: \(message)"
+                        default:
+                            break
+                        }
+                    }
+                }
+            } catch {
+                // The warning above already said why.
+                log.error("transcribe \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+            transcribeQueue.removeFirst()
+            transcribing[id] = nil
+            await refresh()
+            // New captions go up with the next sync.
+            sync()
+        }
+    }
+
+    func downloadModel() {
+        guard let cli, modelDownload == nil else { return }
+        modelDownload = 0
+        Task {
+            do {
+                try await cli.stream(["transcribe", "--download-model"]) { event in
+                    Task { @MainActor [weak self] in
+                        if case let .progress(_, done, total) = event, total > 0 {
+                            self?.modelDownload = Double(done) / Double(total)
+                        }
+                    }
+                }
+                show("Modelo de Whisper descargado")
+            } catch {
+                lastError = error.localizedDescription
+            }
+            modelDownload = nil
+            await reloadTranscriber()
         }
     }
 

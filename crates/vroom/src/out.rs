@@ -47,6 +47,7 @@ impl Out {
                 "restored" => "recuperada",
                 "freed" => "copia local liberada",
                 "imported" => "importada",
+                "transcribed" => "transcrita",
                 other => other,
             };
             format!("{id}: {verb}")
@@ -73,6 +74,20 @@ impl Out {
             let pct = (done * 100).checked_div(total).unwrap_or(0);
             eprint!("\r{id}: {pct:>3}% ({} / {})", mb(done), mb(total));
             if finished {
+                eprintln!();
+            }
+        }
+    }
+}
+
+impl Out {
+    /// Progress of work measured in percent (transcription), as `done` of 100.
+    pub fn percent(&self, id: &str, pct: u64) {
+        if self.json {
+            self.event(&Event::Progress { id: id.into(), done: pct.min(100), total: 100 }, String::new);
+        } else {
+            eprint!("\r{id}: {pct:>3}%");
+            if pct >= 100 {
                 eprintln!();
             }
         }

@@ -1,0 +1,5 @@
+{
+  "type": "transcriber",
+  "model": "/Users/ana/Library/Application Support/Vroom/models/ggml-large-v3-turbo-q5_0.bin",
+  "whisper": "/opt/homebrew/bin/whisper-cli"
+}
