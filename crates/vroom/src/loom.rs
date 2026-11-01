@@ -6,6 +6,8 @@
 //! yt-dlp). Only videos the signed-in person created are listed. Re-running an
 //! import skips what is already in the library, so it can stop and resume.
 
+mod dash;
+
 use crate::out::Out;
 use crate::{find_tool, take_flag, take_opt, Ctx};
 use serde_json::{json, Value};
@@ -253,6 +255,7 @@ fn import_one(out: &Out, ctx: &Ctx, loom: &Loom, v: &Video, id: &str) -> Result<
     match loom.source(&v.id)? {
         Media::File(url) => loom.download(&url, &video, |d, t| out.progress(id, d, t))?,
         Media::Hls(url) => loom.download_hls(&url, &dir, &video)?,
+        Media::Dash(url) => loom.download_dash(&url, &dir, &video)?,
     }
 
     if let Some(url) = &v.thumbnail {
@@ -276,6 +279,7 @@ fn import_one(out: &Out, ctx: &Ctx, loom: &Loom, v: &Video, id: &str) -> Result<
 enum Media {
     File(String),
     Hls(String),
+    Dash(String),
 }
 
 struct Loom {
@@ -474,6 +478,7 @@ impl Loom {
         )?;
         match data["getVideo"]["nullableRawCdnUrl"]["url"].as_str() {
             Some(url) if url.contains(".m3u8") => Ok(Media::Hls(url.to_string())),
+            Some(url) if url.split('?').next().is_some_and(|p| p.ends_with(".mpd")) => Ok(Media::Dash(url.to_string())),
             Some(url) if !url.is_empty() => {
                 Err(tr!("formato no soportado ({url})", url = url.split('?').next().unwrap_or(url)))
             }
@@ -614,16 +619,70 @@ impl Loom {
         if text.contains("#EXT-X-KEY") && !text.contains("METHOD=NONE") {
             return Err(t("vídeo HLS cifrado; no soportado"));
         }
-        let uris = segment_uris(&text);
-        if uris.len() > MAX_SEGMENTS {
-            return Err(tr!("lista HLS con demasiados segmentos ({n})", n = uris.len()));
+        let uris: Vec<String> = segment_uris(&text).iter().map(|uri| sign(playlist_url, uri)).collect();
+        self.fetch_into(&uris, dest)?;
+        Ok(text.contains("#EXT-X-MAP"))
+    }
+
+    /// Some Loom videos are only DASH: WebM (VP9 and Opus) in segments, signed
+    /// like HLS. Join each track's segments here, then ffmpeg makes an H.264/AAC
+    /// MP4 offline, since VP9 does not play everywhere an MP4 should.
+    fn download_dash(&self, mpd_url: &str, dir: &Path, dest: &Path) -> Result<(), String> {
+        let ffmpeg = find_tool("ffmpeg", "VROOM_FFMPEG")
+            .ok_or_else(|| t("este vídeo solo está en streaming (DASH); instala ffmpeg para importarlo"))?;
+        let mpd = String::from_utf8_lossy(&self.get_bytes(mpd_url)?).into_owned();
+        let (video, audio) = dash::pick(&dash::parse(&mpd)?);
+        let video = video.ok_or_else(|| t("lista DASH sin vídeo"))?;
+        let video_tmp = dir.join("dash-video.part");
+        let audio_tmp = dir.join("dash-audio.part");
+        let out_tmp = dest.with_extension("dash.mp4");
+        let result = (|| {
+            let urls = |rep: &dash::Rep| -> Vec<String> { rep.urls().iter().map(|u| sign(mpd_url, u)).collect() };
+            self.fetch_into(&urls(&video), &video_tmp)?;
+            let mut cmd = std::process::Command::new(&ffmpeg);
+            cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
+            // Local files of a known container: ffmpeg must not guess or follow anything.
+            cmd.args(["-protocol_whitelist", "file", "-f", video.demuxer(), "-i"]).arg(&video_tmp);
+            if let Some(audio) = &audio {
+                self.fetch_into(&urls(audio), &audio_tmp)?;
+                cmd.args(["-protocol_whitelist", "file", "-f", audio.demuxer(), "-i"]).arg(&audio_tmp);
+                cmd.args(["-map", "0:v:0", "-map", "1:a:0"]);
+            }
+            if video.is_h264() {
+                cmd.args(["-c:v", "copy"]);
+            } else {
+                // H.264 in 4:2:0 needs even sizes; screen captures can be 1901x1079.
+                cmd.args(["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"]);
+                cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]);
+            }
+            if audio.as_ref().is_some_and(|a| a.is_aac()) {
+                cmd.args(["-c:a", "copy"]);
+            } else {
+                cmd.args(["-c:a", "aac", "-b:a", "128k"]);
+            }
+            cmd.args(["-movflags", "+faststart"]).arg(&out_tmp);
+            let output = cmd.output().map_err(|e| format!("ffmpeg: {e}"))?;
+            if !output.status.success() {
+                return Err(format!("ffmpeg: {}", String::from_utf8_lossy(&output.stderr).trim()));
+            }
+            std::fs::rename(&out_tmp, dest).map_err(|e| e.to_string())
+        })();
+        for tmp in [&video_tmp, &audio_tmp, &out_tmp] {
+            let _ = std::fs::remove_file(tmp);
+        }
+        result
+    }
+
+    /// Segments, fetched a few at a time, written in order into one file.
+    fn fetch_into(&self, urls: &[String], dest: &Path) -> Result<(), String> {
+        if urls.len() > MAX_SEGMENTS {
+            return Err(tr!("lista con demasiados segmentos ({n})", n = urls.len()));
         }
         let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
         let mut total = 0u64;
-        for batch in uris.chunks(SEGMENTS_AT_ONCE) {
+        for batch in urls.chunks(SEGMENTS_AT_ONCE) {
             let fetched: Vec<Result<Vec<u8>, String>> = std::thread::scope(|s| {
-                let handles: Vec<_> =
-                    batch.iter().map(|uri| s.spawn(|| self.get_segment(&sign(playlist_url, uri)))).collect();
+                let handles: Vec<_> = batch.iter().map(|url| s.spawn(|| self.get_segment(url))).collect();
                 handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(t("descarga interrumpida")))).collect()
             });
             for bytes in fetched {
@@ -635,8 +694,7 @@ impl Loom {
                 file.write_all(&bytes).map_err(|e| e.to_string())?;
             }
         }
-        file.sync_all().map_err(|e| e.to_string())?;
-        Ok(text.contains("#EXT-X-MAP"))
+        file.sync_all().map_err(|e| e.to_string())
     }
 }
 

@@ -70,7 +70,6 @@
   "la sesión de Loom no es válida o ha caducado: vuelve a copiar la cookie de loom.com": "the Loom session is not valid or has expired: copy the loom.com cookie again",
   "la subida a medias caducó en R2; se reiniciará": "the partial upload expired in R2; it will start over",
   "las credenciales no tienen acceso a este bucket": "the credentials have no access to this bucket",
-  "lista HLS con demasiados segmentos ({n})": "HLS playlist with too many segments ({n})",
   "lista HLS sin vídeo": "HLS playlist without video",
   "local": "local",
   "meta.json de {id} no es válido: {e}": "meta.json of {id} is not valid: {e}",
@@ -138,5 +137,14 @@
   "no tiene subtítulos: transcríbela primero": "it has no captions: transcribe it first",
   "respuesta de Anthropic ilegible: {e}": "unreadable answer from Anthropic: {e}",
   "título automático: {message}": "automatic title: {message}",
-  "{failed} de {total} títulos fallaron": "{failed} of {total} titles failed"
+  "{failed} de {total} títulos fallaron": "{failed} of {total} titles failed",
+  "este vídeo solo está en streaming (DASH); instala ffmpeg para importarlo": "this video is only available as a stream (DASH); install ffmpeg to import it",
+  "lista DASH no válida": "invalid DASH manifest",
+  "lista DASH sin duración": "DASH manifest without a duration",
+  "lista DASH sin plantilla de segmentos": "DASH manifest without a segment template",
+  "lista DASH sin vídeo": "DASH manifest without video",
+  "lista DASH vacía": "empty DASH manifest",
+  "lista con demasiados segmentos ({n})": "playlist with too many segments ({n})",
+  "plantilla DASH no soportada": "unsupported DASH template",
+  "vídeo DASH cifrado; no soportado": "encrypted DASH video; not supported"
 }
