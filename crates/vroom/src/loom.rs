@@ -127,13 +127,18 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
         return Err("--free-local necesita subir a R2".into());
     }
     let (mut imported, mut skipped, mut failed) = (0, 0, Vec::new());
+    // Already imported, by Loom id. Imports get random ids like any recording:
+    // Loom ids are in old share links, and the bucket may be public.
+    let mut known: std::collections::HashMap<String, String> = ctx
+        .lib
+        .list()?
+        .into_iter()
+        .filter(|e| e.meta.source == Source::Loom)
+        .filter_map(|e| Some((e.meta.source_id?, e.meta.id)))
+        .collect();
     for v in videos.iter().take(limit) {
-        let id = local_id(&v.id);
-        if !vroom_core::id::is_valid(&id) {
-            out.warning(None, &format!("id de Loom inesperado: {}", v.id));
-            continue;
-        }
-        let fresh = !ctx.lib.contains(&id);
+        let fresh = !known.contains_key(&v.id);
+        let id = known.entry(v.id.clone()).or_insert_with(vroom_core::id::generate).clone();
         if fresh {
             if let Err(e) = import_one(out, ctx, &loom, v, &id) {
                 out.warning(Some(&id), &format!("{}: {e}", v.name));
@@ -170,10 +175,6 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-pub fn local_id(loom_id: &str) -> String {
-    format!("loom-{}", loom_id.to_ascii_lowercase())
 }
 
 fn import_one(out: &Out, ctx: &Ctx, loom: &Loom, v: &Video, id: &str) -> Result<(), String> {
@@ -616,7 +617,5 @@ mod tests {
         assert_eq!(v.duration_secs, 902.5);
         assert_eq!(v.thumbnail.as_deref(), Some("https://x/a.jpg"));
         assert_eq!(v.created_at.unwrap().year(), 2025);
-        assert_eq!(local_id(&v.id), "loom-0f2b8c1e9a7d4b3c");
-        assert!(vroom_core::id::is_valid(&local_id(&v.id)));
     }
 }
