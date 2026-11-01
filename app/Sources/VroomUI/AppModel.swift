@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 import Network
 import Observation
+import OSLog
 import ServiceManagement
 import VroomCapture
 import VroomKit
@@ -16,7 +17,12 @@ public enum Phase: Equatable {
 }
 
 /// Recording choices, remembered between launches.
+public enum CaptureMode: String, CaseIterable {
+    case screen, window, region
+}
+
 public struct Prefs: Equatable {
+    var captureMode: CaptureMode
     /// `nil` records the display under the mouse.
     var displayID: CGDirectDisplayID?
     var cameraID: String?
@@ -29,6 +35,7 @@ public struct Prefs: Equatable {
 
     static func load(_ d: UserDefaults = .standard) -> Prefs {
         Prefs(
+            captureMode: d.string(forKey: "captureMode").flatMap(CaptureMode.init(rawValue:)) ?? .screen,
             displayID: (d.object(forKey: "displayID") as? NSNumber).map { CGDirectDisplayID($0.uint32Value) },
             cameraID: d.string(forKey: "cameraID"),
             microphoneID: d.object(forKey: "microphoneID") == nil ? Devices.defaultMicrophone : d.string(forKey: "microphoneID"),
@@ -40,6 +47,7 @@ public struct Prefs: Equatable {
     }
 
     func save(_ d: UserDefaults = .standard) {
+        d.set(captureMode.rawValue, forKey: "captureMode")
         d.set(displayID.map { NSNumber(value: $0) }, forKey: "displayID")
         d.set(cameraID, forKey: "cameraID")
         // An empty string means "no microphone", unlike a missing key (the default one).
@@ -52,6 +60,8 @@ public struct Prefs: Equatable {
     }
 }
 
+let log = Logger(subsystem: "io.github.estevecastells.vroom", category: "app")
+
 @MainActor
 @Observable
 public final class AppModel {
@@ -62,7 +72,9 @@ public final class AppModel {
     private(set) var transfers: [String: Double] = [:]
     private(set) var syncing = false
     private(set) var toast: String?
-    private(set) var lastError: String?
+    private(set) var lastError: String? {
+        didSet { if let lastError { log.error("\(lastError, privacy: .public)") } }
+    }
     private(set) var openAtLogin = SMAppService.mainApp.status == .enabled
     /// macOS only reports a newly granted Screen Recording permission after a relaunch.
     private(set) var canRecordScreen = Devices.canRecordScreen
@@ -77,6 +89,7 @@ public final class AppModel {
     private var bubble: CameraBubble?
     private var controls: ControlBar?
     private var countdown: Countdown?
+    private var regionFrame: RegionFrame?
     private var startTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     private var syncAgain = false
@@ -168,6 +181,7 @@ public final class AppModel {
     var isRecording: Bool { phase != .idle }
 
     public func toggleRecording() {
+        log.info("toggle in phase \(String(describing: self.phase), privacy: .public), screen permission \(Devices.canRecordScreen)")
         switch phase {
         case .idle: startRecording()
         case .recording: stopRecording()
@@ -208,13 +222,40 @@ public final class AppModel {
             prefs.cameraID = nil
             show("Sin permiso para la cámara")
         }
-        let displayID = prefs.displayID.flatMap { id in Devices.displays().contains { $0.id == id } ? id : nil }
-            ?? Devices.displayUnderMouse()
-        let screen = Devices.screen(for: displayID) ?? NSScreen.main!
+        // What to record, and where it is on screen (AppKit coordinates).
+        let target: CaptureTarget
+        let area: NSRect
+        let screen: NSScreen
+        switch prefs.captureMode {
+        case .screen:
+            let id = prefs.displayID.flatMap { id in Devices.displays().contains { $0.id == id } ? id : nil }
+                ?? Devices.displayUnderMouse()
+            screen = Devices.screen(for: id) ?? NSScreen.main!
+            target = .display(id)
+            area = screen.visibleFrame
+        case .window:
+            guard case let .window(id)? = await SelectionOverlay.pick(.window),
+                  let w = SelectionOverlay.onScreenWindows().first(where: { $0.id == id })
+            else { throw CancellationError() }
+            target = .window(id)
+            area = SelectionOverlay.cocoaRect(fromCG: w.frame)
+            screen = NSScreen.screens.first { $0.frame.intersects(area) } ?? NSScreen.main!
+        case .region:
+            guard let picked = await SelectionOverlay.pick(.region), case let .region(id, rect) = picked
+            else { throw CancellationError() }
+            screen = Devices.screen(for: id) ?? NSScreen.main!
+            target = picked
+            area = NSRect(x: screen.frame.minX + rect.minX, y: screen.frame.maxY - rect.maxY,
+                          width: rect.width, height: rect.height)
+            let frame = RegionFrame(around: area)
+            frame.show()
+            regionFrame = frame
+        }
+        try Task.checkCancellation()
 
         let entry = try await cli.entry(["new"])
         recordingID = entry.id
-        if let cam = prefs.cameraID, let bubble = CameraBubble(cameraID: cam, on: screen) {
+        if let cam = prefs.cameraID, let bubble = CameraBubble(cameraID: cam, in: area) {
             bubble.show()
             self.bubble = bubble
         }
@@ -226,7 +267,7 @@ public final class AppModel {
         }
         try Task.checkCancellation()
 
-        let settings = RecorderSettings(displayID: displayID, microphoneID: prefs.microphoneID,
+        let settings = RecorderSettings(target: target, microphoneID: prefs.microphoneID,
                                         systemAudio: prefs.systemAudio, maxHeight: prefs.maxHeight, fps: prefs.fps, codec: prefs.codec)
         let recorder = Recorder(settings: settings, url: entry.dirURL.appendingPathComponent("video.mp4"))
         recorder.onStop = { [weak self] error in
@@ -250,6 +291,7 @@ public final class AppModel {
         }
         self.recorder = recorder
         phase = .recording(started: Date(), pausedAt: nil, pausedTotal: 0)
+        log.info("recording \(entry.id, privacy: .public): \(String(describing: target), privacy: .public)")
         let bar = ControlBar(model: self, on: screen)
         bar.show()
         controls = bar
@@ -321,6 +363,8 @@ public final class AppModel {
         bubble = nil
         controls?.close()
         controls = nil
+        regionFrame?.close()
+        regionFrame = nil
     }
 
     private func finishRecording() {

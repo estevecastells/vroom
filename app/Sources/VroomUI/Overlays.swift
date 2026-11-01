@@ -33,7 +33,9 @@ final class CameraBubble {
 
     var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
 
-    init?(cameraID: String, on screen: NSScreen, diameter: CGFloat = 200) {
+    /// `area` is what is being recorded (AppKit coordinates); the bubble sits in its bottom-left corner.
+    init?(cameraID: String, in area: NSRect, diameter requested: CGFloat = 200) {
+        let diameter = min(requested, max(96, min(area.width, area.height) / 3))
         guard let device = AVCaptureDevice(uniqueID: cameraID) ?? AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input)
         else { return nil }
@@ -41,8 +43,8 @@ final class CameraBubble {
         session.sessionPreset = session.canSetSessionPreset(.vga640x480) ? .vga640x480 : .medium
         session.addInput(input)
 
-        let margin: CGFloat = 32
-        let frame = NSRect(x: screen.visibleFrame.minX + margin, y: screen.visibleFrame.minY + margin,
+        let margin = min(32, diameter / 6)
+        let frame = NSRect(x: area.minX + margin, y: area.minY + margin,
                            width: diameter, height: diameter)
         panel = FloatingPanel(rect: frame, movable: true)
         let view = NSView(frame: NSRect(origin: .zero, size: frame.size))

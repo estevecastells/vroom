@@ -119,10 +119,25 @@ public struct MenuContent: View {
 
     private var sources: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Picker(selection: $model.prefs.displayID) {
-                Text("Pantalla bajo el ratón").tag(CGDirectDisplayID?.none)
-                ForEach(displays) { Text($0.name).tag(Optional($0.id)) }
-            } label: { Image(systemName: "display").frame(width: 18) }
+            Picker("Qué grabar", selection: $model.prefs.captureMode) {
+                Label("Pantalla", systemImage: "display").tag(CaptureMode.screen)
+                Label("Ventana", systemImage: "macwindow").tag(CaptureMode.window)
+                Label("Área", systemImage: "rectangle.dashed").tag(CaptureMode.region)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.bottom, 2)
+            if model.prefs.captureMode == .screen {
+                Picker(selection: $model.prefs.displayID) {
+                    Text("Pantalla bajo el ratón").tag(CGDirectDisplayID?.none)
+                    ForEach(displays) { Text($0.name).tag(Optional($0.id)) }
+                } label: { Image(systemName: "display").frame(width: 18) }
+            } else {
+                Text(model.prefs.captureMode == .window
+                     ? "Al pulsar Grabar, haz clic en la ventana que quieras."
+                     : "Al pulsar Grabar, arrastra para elegir el área.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Picker(selection: $model.prefs.cameraID) {
                 Text("Sin cámara").tag(String?.none)
                 ForEach(cameras) { Text($0.name).tag(Optional($0.id)) }

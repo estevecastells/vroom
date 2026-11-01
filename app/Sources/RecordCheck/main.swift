@@ -8,12 +8,26 @@ import VroomCapture
 
 let args = CommandLine.arguments.dropFirst()
 guard let path = args.first else {
-    print("usage: RecordCheck <out.mp4> [seconds] [--mic] [--system]")
+    print("usage: RecordCheck <out.mp4> [seconds] [--mic] [--system] [--region | --window]")
     exit(2)
 }
 let seconds = args.dropFirst().first.flatMap(Double.init) ?? 3
 let mic = args.contains("--mic") ? Devices.defaultMicrophone : nil
 let system = args.contains("--system")
+// --region records 800×500 points of the main display; --window the frontmost window of another app.
+let target: CaptureTarget = {
+    if args.contains("--region") { return .region(CGMainDisplayID(), CGRect(x: 100, y: 100, width: 800, height: 500)) }
+    if args.contains("--window") {
+        let own = ProcessInfo.processInfo.processIdentifier
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        if let w = list.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 && ($0[kCGWindowOwnerPID as String] as? Int32) != own }),
+           let id = w[kCGWindowNumber as String] as? CGWindowID {
+            print("window \(id) of \(w[kCGWindowOwnerName as String] ?? "?")")
+            return .window(id)
+        }
+    }
+    return .display(CGMainDisplayID())
+}()
 let url = URL(fileURLWithPath: path)
 
 guard Devices.canRecordScreen else {
@@ -24,7 +38,7 @@ guard Devices.canRecordScreen else {
 
 Task {
     do {
-        let recorder = Recorder(settings: RecorderSettings(displayID: CGMainDisplayID(), microphoneID: mic, systemAudio: system), url: url)
+        let recorder = Recorder(settings: RecorderSettings(target: target, microphoneID: mic, systemAudio: system), url: url)
         try await recorder.start()
         try await Task.sleep(for: .seconds(seconds / 2))
         recorder.pause()

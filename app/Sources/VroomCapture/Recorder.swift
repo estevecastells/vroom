@@ -9,10 +9,18 @@ import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
 
+/// What to record.
+public enum CaptureTarget: Sendable, Equatable {
+    case display(CGDirectDisplayID)
+    case window(CGWindowID)
+    /// A rectangle of a display, in points from the display's top-left corner.
+    case region(CGDirectDisplayID, CGRect)
+}
+
 public struct RecorderSettings: Sendable, Equatable {
     public enum Codec: String, Sendable, CaseIterable { case h264, hevc }
 
-    public var displayID: CGDirectDisplayID
+    public var target: CaptureTarget
     /// `nil` records no audio.
     public var microphoneID: String?
     /// Longest side is scaled down to this many pixels (0 keeps the native size).
@@ -25,9 +33,9 @@ public struct RecorderSettings: Sendable, Equatable {
     /// What the Mac plays (other apps, calls, videos), without Vroom's own sounds.
     public var systemAudio: Bool
 
-    public init(displayID: CGDirectDisplayID, microphoneID: String?, systemAudio: Bool = false, maxHeight: Int = 1080,
+    public init(target: CaptureTarget, microphoneID: String?, systemAudio: Bool = false, maxHeight: Int = 1080,
                 fps: Int = 30, codec: Codec = .h264, bitsPerPixel: Double = 0.07, showsCursor: Bool = true) {
-        self.displayID = displayID
+        self.target = target
         self.microphoneID = microphoneID
         self.systemAudio = systemAudio
         self.maxHeight = maxHeight
@@ -47,12 +55,14 @@ public struct RecordingResult: Sendable {
 
 public enum RecorderError: Error, LocalizedError {
     case noDisplay
+    case noWindow
     case writer(String)
     case noFrames
 
     public var errorDescription: String? {
         switch self {
         case .noDisplay: "No se encuentra la pantalla seleccionada."
+        case .noWindow: "La ventana elegida ya no está abierta."
         case let .writer(m): "No se pudo escribir el vídeo: \(m)"
         case .noFrames: "No llegó ninguna imagen de la pantalla. Revisa el permiso de Grabación de pantalla."
         }
@@ -92,20 +102,54 @@ public final class Recorder: NSObject, @unchecked Sendable {
     /// (the camera bubble); every other window of the app is left out.
     public func start(exceptWindows: [CGWindowID] = []) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == settings.displayID }) ?? content.displays.first
-        else { throw RecorderError.noDisplay }
         let ownBundle = Bundle.main.bundleIdentifier
         let ownApps = content.applications.filter {
             $0.processID == ProcessInfo.processInfo.processIdentifier || (ownBundle != nil && $0.bundleIdentifier == ownBundle)
         }
         let kept = content.windows.filter { exceptWindows.contains($0.windowID) }
-        let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: kept)
+        func display(_ id: CGDirectDisplayID) throws -> SCDisplay {
+            guard let d = content.displays.first(where: { $0.displayID == id }) ?? content.displays.first
+            else { throw RecorderError.noDisplay }
+            return d
+        }
 
-        size = Self.outputSize(width: display.width, height: display.height, scale: Self.backingScale(display.displayID),
+        let config = SCStreamConfiguration()
+        let filter: SCContentFilter
+        let points: CGSize
+        let scale: Double
+        switch settings.target {
+        case let .display(id):
+            let d = try display(id)
+            filter = SCContentFilter(display: d, excludingApplications: ownApps, exceptingWindows: kept)
+            points = CGSize(width: d.width, height: d.height)
+            scale = Self.backingScale(d.displayID)
+        case let .region(id, rect):
+            let d = try display(id)
+            filter = SCContentFilter(display: d, excludingApplications: ownApps, exceptingWindows: kept)
+            config.sourceRect = rect
+            points = rect.size
+            scale = Self.backingScale(d.displayID)
+        case let .window(id):
+            guard let w = content.windows.first(where: { $0.windowID == id }) else { throw RecorderError.noWindow }
+            let center = CGPoint(x: w.frame.midX, y: w.frame.midY)
+            let d = content.displays.first { $0.frame.contains(center) } ?? content.displays.first
+            guard let d else { throw RecorderError.noDisplay }
+            if kept.isEmpty {
+                // Just the window, even when covered or moved around.
+                filter = SCContentFilter(desktopIndependentWindow: w)
+            } else {
+                // The window plus the camera bubble, as they sit on the display.
+                filter = SCContentFilter(display: d, including: [w] + kept)
+                config.sourceRect = w.frame.offsetBy(dx: -d.frame.minX, dy: -d.frame.minY)
+            }
+            points = w.frame.size
+            scale = Self.backingScale(d.displayID)
+        }
+
+        size = Self.outputSize(width: points.width, height: points.height, scale: scale,
                                maxHeight: settings.maxHeight)
         try makeWriter()
 
-        let config = SCStreamConfiguration()
         config.width = Int(size.width)
         config.height = Int(size.height)
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(settings.fps))
@@ -333,9 +377,9 @@ public final class Recorder: NSObject, @unchecked Sendable {
     }
 
     /// Native pixels, scaled so the shorter side is at most `maxHeight`, even sizes for the encoder.
-    public static func outputSize(width: Int, height: Int, scale: Double, maxHeight: Int) -> CGSize {
-        var w = Double(width) * scale
-        var h = Double(height) * scale
+    public static func outputSize(width: Double, height: Double, scale: Double, maxHeight: Int) -> CGSize {
+        var w = width * scale
+        var h = height * scale
         let short = min(w, h)
         if maxHeight > 0, short > Double(maxHeight) {
             let f = Double(maxHeight) / short
