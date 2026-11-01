@@ -937,7 +937,7 @@ impl VroomApp {
         let Some(mut dialog) = self.dialog.take() else { return };
         let mut close = false;
         let mut run: Option<(Vec<String>, &'static str)> = None;
-        let modal = egui::Modal::new(egui::Id::new("dialog")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::unique("dialog")).show(ctx, |ui| {
             ui.set_width(360.0);
             match &mut dialog {
                 Dialog::Rename(entry, title) => {
