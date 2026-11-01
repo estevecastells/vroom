@@ -21,6 +21,9 @@ pub enum Event {
     Entry {
         entry: Entry,
     },
+    Folders {
+        folders: Vec<String>,
+    },
     Config {
         config: Config,
         path: String,

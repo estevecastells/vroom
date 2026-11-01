@@ -67,6 +67,8 @@ let log = Logger(subsystem: "io.github.estevecastells.vroom", category: "app")
 public final class AppModel {
     public private(set) var phase: Phase = .idle
     public private(set) var entries: [Entry] = []
+    /// Every folder, including empty ones, sorted.
+    private(set) var folders: [String] = []
     public private(set) var config: ConfigInfo?
     /// Upload/download progress by recording id, 0…1.
     private(set) var transfers: [String: Double] = [:]
@@ -139,6 +141,8 @@ public final class AppModel {
         do {
             let list = try await cli.list()
             if list != entries { entries = list }
+            let f = try await cli.folders()
+            if f != folders { folders = f }
         } catch {
             lastError = error.localizedDescription
         }
@@ -253,7 +257,7 @@ public final class AppModel {
         }
         try Task.checkCancellation()
 
-        let entry = try await cli.entry(["new"])
+        let entry = try await cli.entry(["new", "--owner-pid", String(ProcessInfo.processInfo.processIdentifier)])
         recordingID = entry.id
         if let cam = prefs.cameraID, let bubble = CameraBubble(cameraID: cam, in: area) {
             bubble.show()
@@ -408,7 +412,9 @@ public final class AppModel {
                     }
                 } catch {
                     // Per-recording failures already showed up as warnings.
-                    if !(error.localizedDescription.contains("se reintentarán")) { lastError = error.localizedDescription }
+                    // A Loom import from the terminal holds the lock; it uploads as it goes.
+                    let m = error.localizedDescription
+                    if !m.contains("se reintentarán") && !m.contains("sincronización en marcha") { lastError = m }
                 }
                 transfers = [:]
                 await refresh()
@@ -488,24 +494,28 @@ public final class AppModel {
     }
 
     func rename(_ entry: Entry, to title: String) {
-        run(["rename", entry.id, title]) { $0.sync() }
+        run(["rename", entry.id, "--", title]) { $0.sync() }
     }
 
     func move(_ entry: Entry, to folder: String) {
-        run(["move", entry.id, folder]) { $0.sync() }
+        run(["move", entry.id, "--", folder]) { $0.sync() }
     }
 
-    /// Every folder and parent folder in use, sorted.
-    var folders: [String] {
-        var all = Set<String>()
-        for case let f? in entries.map(\.folder) {
-            var parts: [Substring] = []
-            for p in f.split(separator: "/") {
-                parts.append(p)
-                all.insert(parts.joined(separator: "/"))
+    func createFolder(_ path: String) { folderCommand(["folder", "create", "--", path]) }
+    func renameFolder(_ path: String, to new: String) { folderCommand(["folder", "rename", "--", path, new]) }
+    func deleteFolder(_ path: String) { folderCommand(["folder", "delete", "--", path]) }
+
+    private func folderCommand(_ args: [String]) {
+        guard let cli else { return }
+        Task {
+            do {
+                folders = try await cli.folders(args)
+                await refresh()
+                sync()
+            } catch {
+                lastError = error.localizedDescription
             }
         }
-        return all.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     func freeLocal(_ entry: Entry) {

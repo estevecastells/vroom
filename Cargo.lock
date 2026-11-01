@@ -1125,20 +1125,21 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vroom"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "keyring",
  "serde",
  "serde_json",
  "time",
  "ureq",
+ "url",
  "vroom-cloud",
  "vroom-core",
 ]
 
 [[package]]
 name = "vroom-cloud"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusty-s3",
  "serde",
@@ -1152,9 +1153,10 @@ dependencies = [
 
 [[package]]
 name = "vroom-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "getrandom 0.4.3",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

@@ -6,13 +6,33 @@ pub const META: &str = "meta.json";
 pub const THUMB: &str = "thumb.jpg";
 pub const PAGE: &str = "index.html";
 pub const CAPTIONS: &str = "captions.vtt";
+/// Folders created by hand (they can be empty), at the library root and in the
+/// bucket's private area: `{"folders": ["Clientes", "Clientes/Acme"]}`.
+pub const FOLDERS: &str = "folders.json";
 /// Local only: upload progress and cloud state.
 pub const STATE: &str = "state.json";
 
-/// Files uploaded after the video, in order. `meta.json` goes last: a restore
-/// only trusts recordings whose `meta.json` is in the bucket, so its presence
-/// means everything before it arrived.
-pub const AFTER_VIDEO: [&str; 4] = [THUMB, CAPTIONS, PAGE, META];
+/// Public files uploaded after the video. `meta.json` is not public: it goes,
+/// last of all, to the private area (`private_meta_key`), and a restore only
+/// trusts recordings whose metadata is there, so everything before it arrived.
+pub const AFTER_VIDEO: [&str; 3] = [THUMB, CAPTIONS, PAGE];
+
+/// The bucket may be public, so what only the owner should see (titles of
+/// folders, Loom ids, descriptions) lives under `<prefix>library/<secret>/`,
+/// a random name that only an authenticated listing finds.
+pub fn private_root(prefix: &str) -> String {
+    format!("{prefix}library/")
+}
+
+pub fn private_meta_key(private: &str, id: &str) -> String {
+    format!("{private}meta/{id}.json")
+}
+
+/// The id in `<private>meta/<id>.json`.
+pub fn id_from_private_meta<'a>(private: &str, key: &'a str) -> Option<&'a str> {
+    let id = key.strip_prefix(private)?.strip_prefix("meta/")?.strip_suffix(".json")?;
+    crate::id::is_valid(id).then_some(id)
+}
 
 pub fn recordings_prefix(prefix: &str) -> String {
     format!("{prefix}recordings/")

@@ -9,8 +9,41 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
-/// Present while the app is still writing the video.
+/// Present while a process is still writing the video; holds that process's id.
 pub const RECORDING_MARKER: &str = ".recording";
+
+/// Mark a folder as being written by process `pid`.
+pub fn mark_in_progress(dir: &Path, pid: u32) -> std::io::Result<()> {
+    std::fs::write(dir.join(RECORDING_MARKER), pid.to_string())
+}
+
+/// Whether the marker's owner may still be writing. An empty or unreadable
+/// marker (older versions) counts as abandoned.
+fn owner_alive(dir: &Path) -> bool {
+    let Some(pid) = std::fs::read_to_string(dir.join(RECORDING_MARKER)).ok().and_then(|s| s.trim().parse::<u32>().ok())
+    else {
+        return false;
+    };
+    process_alive(pid)
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else { return false };
+    if pid <= 0 {
+        return false;
+    }
+    // Signal 0 checks existence; EPERM means it exists but belongs to someone else.
+    let exists = unsafe { libc::kill(pid, 0) } == 0;
+    exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    // No process check without extra APIs: treat markers as abandoned, as before.
+    let _ = pid;
+    false
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +69,9 @@ pub struct State {
     /// Title or description changed since the upload: `meta.json` and the page go up again.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub meta_dirty: bool,
+    /// `meta.json` is in the bucket's private area (older uploads put it next to the video).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub meta_private: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multipart: Option<Multipart>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,6 +118,21 @@ pub struct Library {
     root: PathBuf,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderList {
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+/// `a/b/c` → `a`, `a/b`, `a/b/c`.
+fn with_parents(path: &str) -> impl Iterator<Item = String> + '_ {
+    path.match_indices('/').map(|(i, _)| path[..i].to_string()).chain(std::iter::once(path.to_string()))
+}
+
+fn is_within(folder: &str, root: &str) -> bool {
+    folder == root || folder.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
+}
+
 impl Library {
     pub fn open(root: impl Into<PathBuf>) -> std::io::Result<Library> {
         let root = root.into();
@@ -109,11 +160,12 @@ impl Library {
     }
 
     /// Start a recording: a folder with a provisional `meta.json` and the marker.
-    pub fn create(&self, title: Option<String>, now: OffsetDateTime) -> Result<Entry, String> {
+    /// `owner` is the process that will write the video (the app passes its own pid).
+    pub fn create(&self, title: Option<String>, now: OffsetDateTime, owner: u32) -> Result<Entry, String> {
         let id = crate::id::generate();
         let dir = self.dir(&id)?;
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join(RECORDING_MARKER), b"").map_err(|e| e.to_string())?;
+        mark_in_progress(&dir, owner).map_err(|e| e.to_string())?;
         let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| crate::meta::default_title(now));
         self.write_meta(&Meta::new(id.clone(), title, now))?;
         self.entry(&id)
@@ -138,7 +190,7 @@ impl Library {
         let mut recovered = Vec::new();
         for id in self.ids()? {
             let dir = self.root.join(&id);
-            if !dir.join(RECORDING_MARKER).exists() {
+            if !dir.join(RECORDING_MARKER).exists() || owner_alive(&dir) {
                 continue;
             }
             if file_size(&dir.join(VIDEO)).unwrap_or(0) > 0 {
@@ -193,6 +245,81 @@ impl Library {
             self.write_state(id, &state)?;
         }
         self.entry(id)
+    }
+
+    /// Folders created by hand, which may be empty.
+    pub fn saved_folders(&self) -> Vec<String> {
+        std::fs::read(self.root.join(crate::layout::FOLDERS))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<FolderList>(&b).ok())
+            .map(|l| l.folders)
+            .unwrap_or_default()
+    }
+
+    fn save_folders(&self, mut folders: Vec<String>) -> Result<(), String> {
+        folders.sort();
+        folders.dedup();
+        let json = serde_json::to_vec_pretty(&FolderList { folders }).map_err(|e| e.to_string())?;
+        write_atomic(&self.root.join(crate::layout::FOLDERS), &json).map_err(|e| e.to_string())
+    }
+
+    /// Every folder: the ones created by hand plus those holding recordings,
+    /// with their parents, sorted.
+    pub fn folders(&self) -> Result<Vec<String>, String> {
+        let mut all: Vec<String> = self.saved_folders();
+        for e in self.list()? {
+            all.extend(e.meta.folder);
+        }
+        let mut out: Vec<String> = all.iter().flat_map(|f| with_parents(f).collect::<Vec<_>>()).collect();
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
+    pub fn create_folder(&self, path: &str) -> Result<String, String> {
+        let path = crate::meta::normalize_folder(path).ok_or("el nombre de la carpeta está vacío")?;
+        let mut folders = self.saved_folders();
+        folders.push(path.clone());
+        self.save_folders(folders)?;
+        Ok(path)
+    }
+
+    /// Merge folders from another copy of the library (a restore from R2).
+    pub fn merge_folders(&self, more: &[String]) -> Result<(), String> {
+        let mut folders = self.saved_folders();
+        folders.extend(more.iter().filter_map(|f| crate::meta::normalize_folder(f)));
+        self.save_folders(folders)
+    }
+
+    /// Rename or move a folder with its subfolders and recordings.
+    pub fn rename_folder(&self, from: &str, to: &str) -> Result<String, String> {
+        let from = crate::meta::normalize_folder(from).ok_or("falta la carpeta")?;
+        let to = crate::meta::normalize_folder(to).ok_or("el nombre nuevo está vacío")?;
+        if is_within(&to, &from) && to != from {
+            return Err("no se puede mover una carpeta dentro de sí misma".into());
+        }
+        let moved = |f: &str| if is_within(f, &from) { format!("{to}{}", &f[from.len()..]) } else { f.to_string() };
+        let folders: Vec<String> = self.saved_folders().iter().map(|f| moved(f)).chain([to.clone()]).collect();
+        self.save_folders(folders)?;
+        for e in self.list()? {
+            if let Some(f) = e.meta.folder.as_deref().filter(|f| is_within(f, &from)) {
+                self.set_folder(&e.meta.id, Some(&moved(f)))?;
+            }
+        }
+        Ok(to)
+    }
+
+    /// Delete a folder and its subfolders; their recordings go to the deleted folder's parent.
+    pub fn delete_folder(&self, path: &str) -> Result<(), String> {
+        let path = crate::meta::normalize_folder(path).ok_or("falta la carpeta")?;
+        let parent = path.rsplit_once('/').map(|(p, _)| p.to_string());
+        self.save_folders(self.saved_folders().into_iter().filter(|f| !is_within(f, &path)).collect())?;
+        for e in self.list()? {
+            if e.meta.folder.as_deref().is_some_and(|f| is_within(f, &path)) {
+                self.set_folder(&e.meta.id, parent.as_deref())?;
+            }
+        }
+        Ok(())
     }
 
     /// Put a recording in a folder (`None` or empty: the top level).
@@ -299,7 +426,10 @@ impl Library {
             .into_iter()
             .filter(|e| match e.status {
                 Status::Local | Status::Uploading => e.video.is_some(),
-                Status::Synced | Status::Cloud => self.state(&e.meta.id).meta_dirty,
+                Status::Synced | Status::Cloud => {
+                    let s = self.state(&e.meta.id);
+                    s.meta_dirty || !s.meta_private
+                }
                 Status::Recording => false,
             })
             .map(|e| e.meta.id)
@@ -356,7 +486,7 @@ mod tests {
     #[test]
     fn record_finalize_upload_free() {
         let (_d, lib) = lib();
-        let e = lib.create(None, NOW).unwrap();
+        let e = lib.create(None, NOW, 0).unwrap();
         assert_eq!(e.status, Status::Recording);
         assert_eq!(e.meta.title, "Grabación 1 nov 2026, 13:00");
         let id = e.meta.id.clone();
@@ -376,7 +506,7 @@ mod tests {
         assert_eq!(e.status, Status::Uploading);
         assert_eq!(e.progress, Some(0.4));
 
-        lib.write_state(&id, &State { uploaded_at: Some(NOW), ..State::default() }).unwrap();
+        lib.write_state(&id, &State { uploaded_at: Some(NOW), meta_private: true, ..State::default() }).unwrap();
         assert_eq!(lib.entry(&id).unwrap().status, Status::Synced);
         assert!(lib.pending_upload().unwrap().is_empty());
         assert_eq!(lib.expired_local(30, NOW + time::Duration::days(31)).unwrap(), vec![id.clone()]);
@@ -393,11 +523,20 @@ mod tests {
     }
 
     #[test]
+    fn recover_leaves_live_writers_alone() {
+        let (_d, lib) = lib();
+        let live = lib.create(None, NOW, std::process::id()).unwrap();
+        std::fs::write(live.dir.join(VIDEO), b"half").unwrap();
+        assert!(lib.recover().unwrap().is_empty());
+        assert_eq!(lib.entry(&live.meta.id).unwrap().status, Status::Recording);
+    }
+
+    #[test]
     fn recover_after_crash() {
         let (_d, lib) = lib();
-        let with_video = lib.create(None, NOW).unwrap();
+        let with_video = lib.create(None, NOW, 0).unwrap();
         std::fs::write(with_video.dir.join(VIDEO), b"partial").unwrap();
-        let empty = lib.create(None, NOW).unwrap();
+        let empty = lib.create(None, NOW, 0).unwrap();
         assert_eq!(lib.recover().unwrap(), vec![with_video.meta.id.clone()]);
         assert_eq!(lib.entry(&with_video.meta.id).unwrap().status, Status::Local);
         assert!(!empty.dir.exists());
@@ -406,13 +545,34 @@ mod tests {
     #[test]
     fn list_is_newest_first_and_skips_junk() {
         let (_d, lib) = lib();
-        let old = lib.create(Some("old".into()), NOW).unwrap();
-        let new = lib.create(Some("new".into()), NOW + time::Duration::hours(1)).unwrap();
+        let old = lib.create(Some("old".into()), NOW, 0).unwrap();
+        let new = lib.create(Some("new".into()), NOW + time::Duration::hours(1), 0).unwrap();
         std::fs::create_dir_all(lib.root().join("not-a-recording")).unwrap();
         std::fs::create_dir_all(lib.root().join(".DS_Store")).unwrap();
         let ids: Vec<_> = lib.list().unwrap().into_iter().map(|e| e.meta.title).collect();
         assert_eq!(ids, vec!["new", "old"]);
         let _ = (old, new);
+    }
+
+    #[test]
+    fn folders_create_rename_delete() {
+        let (_d, lib) = lib();
+        lib.create_folder("Vacía").unwrap();
+        let a = lib.create(Some("a".into()), NOW, 0).unwrap().meta.id;
+        let b = lib.create(Some("b".into()), NOW, 0).unwrap().meta.id;
+        lib.set_folder(&a, Some("Clientes/Acme")).unwrap();
+        lib.set_folder(&b, Some("Clientesviejos")).unwrap();
+        assert_eq!(lib.folders().unwrap(), vec!["Clientes", "Clientes/Acme", "Clientesviejos", "Vacía"]);
+
+        lib.rename_folder("Clientes", "Cuentas").unwrap();
+        assert_eq!(lib.meta(&a).unwrap().folder.as_deref(), Some("Cuentas/Acme"));
+        assert_eq!(lib.meta(&b).unwrap().folder.as_deref(), Some("Clientesviejos"), "only whole path components");
+        assert!(lib.rename_folder("Cuentas", "Cuentas/Sub").is_err());
+
+        lib.delete_folder("Cuentas/Acme").unwrap();
+        assert_eq!(lib.meta(&a).unwrap().folder.as_deref(), Some("Cuentas"));
+        lib.delete_folder("Vacía").unwrap();
+        assert_eq!(lib.folders().unwrap(), vec!["Clientesviejos", "Cuentas"]);
     }
 
     #[test]

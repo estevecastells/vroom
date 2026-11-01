@@ -15,13 +15,16 @@ use std::time::Duration;
 use time::OffsetDateTime;
 use vroom_cloud::sync;
 use vroom_core::layout::{CAPTIONS, THUMB, VIDEO};
-use vroom_core::library::RECORDING_MARKER;
+use vroom_core::library::mark_in_progress;
 use vroom_core::{Meta, Source};
 
 const GRAPHQL: &str = "https://www.loom.com/graphql";
 /// Loom documents no rate limit; the archivers pause like this between calls.
 const PAUSE: Duration = Duration::from_millis(400);
 const PAGE: u32 = 50;
+/// Bounds on what a (possibly compromised) Loom response can make us fetch.
+const MAX_SEGMENTS: usize = 50_000;
+const MAX_VIDEO_BYTES: u64 = 50 * 1024 * 1024 * 1024;
 
 const LIST_VIDEOS: &str = "query GetLoomsForLibrary($limit: Int!, $cursor: String, $folderId: String, $sourceValue: String, $source: LoomsSource!, $sortType: LoomsSortType!, $sortOrder: LoomsSortOrder!, $sortGrouping: LoomsSortGrouping, $filters: [[LoomsCollectionFilter!]!], $timeRange: TimeRange) {
   getLooms {
@@ -196,7 +199,7 @@ fn import_one(out: &Out, ctx: &Ctx, loom: &Loom, v: &Video, id: &str) -> Result<
     ctx.lib.write_meta(&meta)?;
     let dir = ctx.lib.dir(id)?;
     // A crash mid-download leaves no video, so `recover` drops the folder.
-    std::fs::write(dir.join(RECORDING_MARKER), b"").map_err(|e| e.to_string())?;
+    mark_in_progress(&dir, std::process::id()).map_err(|e| e.to_string())?;
 
     let video = dir.join(VIDEO);
     match loom.source(&v.id)? {
@@ -240,12 +243,14 @@ impl Loom {
         }
         // A whole Cookie header (name=value; …) as copied from the browser, or just
         // the value of connect.sid.
-        let cookie = if cookie.contains('=') { cookie.to_string() } else { format!("connect.sid={cookie}") };
+        let cookie = if cookie.contains('=') { cookie_pairs(cookie) } else { format!("connect.sid={cookie}") };
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(20)))
             .timeout_recv_response(Some(Duration::from_secs(120)))
             .timeout_per_read(Some(Duration::from_secs(120)))
+            // Loom and its CDN are all https; this also covers redirects.
+            .https_only(true)
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")
             .build()
             .into();
@@ -420,6 +425,7 @@ impl Loom {
 
     /// CDN URLs are signed; no cookie goes to them.
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
+        check_media_url(url)?;
         let resp = self.agent.get(url).call().map_err(|e| e.to_string())?;
         if resp.status() != 200 {
             return Err(format!("HTTP {}", resp.status()));
@@ -428,6 +434,7 @@ impl Loom {
     }
 
     fn download(&self, url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
+        check_media_url(url)?;
         let resp = self.agent.get(url).call().map_err(|e| e.to_string())?;
         if resp.status() != 200 {
             return Err(format!("descarga: HTTP {}", resp.status()));
@@ -445,6 +452,9 @@ impl Loom {
             }
             file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
             done += n as u64;
+            if done > MAX_VIDEO_BYTES {
+                return Err("el vídeo supera el tamaño máximo esperado".into());
+            }
             progress(done, total);
         }
         file.sync_all().map_err(|e| e.to_string())?;
@@ -473,12 +483,19 @@ impl Loom {
             let _ = std::fs::remove_file(&audio_tmp);
         };
         let result = (|| {
-            self.concat_segments(&sign(master_url, &video_uri), &video_tmp)?;
+            // The joined segments are local files of a known container: ffmpeg
+            // must not guess (a "segment" could be a playlist pointing elsewhere).
+            let input = |cmd: &mut std::process::Command, fmp4: bool, path: &Path| {
+                cmd.args(["-protocol_whitelist", "file", "-f", if fmp4 { "mp4" } else { "mpegts" }, "-i"]).arg(path);
+            };
+            let fmp4 = self.concat_segments(&sign(master_url, &video_uri), &video_tmp)?;
             let mut cmd = std::process::Command::new(&ffmpeg);
-            cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(&video_tmp);
+            cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
+            input(&mut cmd, fmp4, &video_tmp);
             if let Some(a) = &audio_uri {
-                self.concat_segments(&sign(master_url, a), &audio_tmp)?;
-                cmd.arg("-i").arg(&audio_tmp).args(["-map", "0:v:0", "-map", "1:a:0"]);
+                let fmp4 = self.concat_segments(&sign(master_url, a), &audio_tmp)?;
+                input(&mut cmd, fmp4, &audio_tmp);
+                cmd.args(["-map", "0:v:0", "-map", "1:a:0"]);
             }
             let out_tmp = dest.with_extension("hls.mp4");
             cmd.args(["-c", "copy", "-movflags", "+faststart"]).arg(&out_tmp);
@@ -493,17 +510,56 @@ impl Loom {
         result
     }
 
-    fn concat_segments(&self, playlist_url: &str, dest: &Path) -> Result<(), String> {
+    /// Download a media playlist's segments into one file; true when they are
+    /// fragmented MP4 (an `#EXT-X-MAP` init segment) rather than MPEG-TS.
+    fn concat_segments(&self, playlist_url: &str, dest: &Path) -> Result<bool, String> {
         let text = String::from_utf8_lossy(&self.get_bytes(playlist_url)?).into_owned();
         if text.contains("#EXT-X-KEY") && !text.contains("METHOD=NONE") {
             return Err("vídeo HLS cifrado; no soportado".into());
         }
+        let uris = segment_uris(&text);
+        if uris.len() > MAX_SEGMENTS {
+            return Err(format!("lista HLS con demasiados segmentos ({})", uris.len()));
+        }
         let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-        for uri in segment_uris(&text) {
+        let mut total = 0u64;
+        for uri in uris {
             let bytes = self.get_bytes(&sign(playlist_url, &uri))?;
+            total += bytes.len() as u64;
+            if total > MAX_VIDEO_BYTES {
+                return Err("el vídeo supera el tamaño máximo esperado".into());
+            }
             file.write_all(&bytes).map_err(|e| e.to_string())?;
         }
-        file.sync_all().map_err(|e| e.to_string())
+        file.sync_all().map_err(|e| e.to_string())?;
+        Ok(text.contains("#EXT-X-MAP"))
+    }
+}
+
+/// Keep the `name=value` pairs of a Cookie header, or of a pasted Set-Cookie
+/// line, dropping attributes such as `Path=/`, `Expires=…` or `HttpOnly`.
+fn cookie_pairs(raw: &str) -> String {
+    const ATTRIBUTES: [&str; 8] =
+        ["domain", "path", "expires", "max-age", "httponly", "secure", "samesite", "priority"];
+    raw.split(';')
+        .map(str::trim)
+        .filter(|p| p.contains('='))
+        .filter(|p| !ATTRIBUTES.contains(&p.split('=').next().unwrap_or("").trim().to_ascii_lowercase().as_str()))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Media URLs come from Loom's responses: only public https hosts, never this
+/// machine or the local network.
+fn check_media_url(url: &str) -> Result<(), String> {
+    let u = url::Url::parse(url).map_err(|_| "URL de Loom no válida".to_string())?;
+    let ok = u.scheme() == "https"
+        && matches!(u.host(), Some(url::Host::Domain(h))
+            if h.contains('.') && !h.ends_with(".local") && !h.ends_with(".internal") && !h.ends_with(".localhost"));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("URL de descarga rechazada: {}", u.host_str().unwrap_or("?")))
     }
 }
 
@@ -620,6 +676,25 @@ mod tests {
         assert_eq!(sign(playlist, "https://other/x.ts"), "https://other/x.ts");
         let text = "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:4,\nseg0.m4s\n#EXTINF:4,\nseg1.m4s\n#EXT-X-ENDLIST\n";
         assert_eq!(segment_uris(text), vec!["init.mp4", "seg0.m4s", "seg1.m4s"]);
+    }
+
+    #[test]
+    fn only_public_https_media_urls() {
+        assert!(check_media_url("https://cdn.loom.com/sessions/x.mp4?Signature=s").is_ok());
+        assert!(check_media_url("http://cdn.loom.com/x.mp4").is_err());
+        assert!(check_media_url("https://127.0.0.1/x").is_err());
+        assert!(check_media_url("https://[::1]/x").is_err());
+        assert!(check_media_url("https://localhost/x").is_err());
+        assert!(check_media_url("file:///etc/passwd").is_err());
+    }
+
+    #[test]
+    fn cookies_from_set_cookie_lines() {
+        assert_eq!(
+            cookie_pairs("connect.sid=s%3Aabc.def; Domain=www.loom.com; Path=/; Expires=Tue, 01 Dec 2026 14:20:33 GMT; HttpOnly; Secure; SameSite=Lax"),
+            "connect.sid=s%3Aabc.def"
+        );
+        assert_eq!(cookie_pairs("a=1; connect.sid=x"), "a=1; connect.sid=x");
     }
 
     #[test]

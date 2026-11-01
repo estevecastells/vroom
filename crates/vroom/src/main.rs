@@ -25,6 +25,9 @@ vroom: grabaciones locales con copia en Cloudflare R2
   vroom restore                     reconstruye la biblioteca desde R2 (ordenador nuevo)
   vroom rename <id> <título>
   vroom move <id> [carpeta/sub]     mueve a una carpeta (sin carpeta: al nivel superior)
+  vroom folders                     lista las carpetas
+  vroom folder create <ruta> | rename <ruta> <nueva> | delete <ruta>
+                                    (al borrar, las grabaciones pasan a la carpeta de arriba)
   vroom free <id>                   borra el vídeo local de una grabación ya subida
   vroom delete <id> [--keep-cloud]  borra la grabación (también de R2, salvo --keep-cloud)
 
@@ -111,7 +114,9 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
         "new" => {
             let title = take_opt(&mut args, "--title");
             let folder = take_opt(&mut args, "--folder");
-            let mut entry = ctx.lib.create(title, now_local())?;
+            // The app writes the video; without --owner-pid this process "owns" it.
+            let owner = take_opt(&mut args, "--owner-pid").and_then(|p| p.parse().ok()).unwrap_or(std::process::id());
+            let mut entry = ctx.lib.create(title, now_local(), owner)?;
             if folder.is_some() {
                 entry = ctx.lib.set_folder(&entry.meta.id, folder.as_deref())?;
             }
@@ -128,20 +133,49 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "recover" => {
+            // An import or sync elsewhere is writing; its folders are not leftovers.
+            let Ok(_lock) = ctx.lock() else {
+                out.ok("biblioteca en uso; no se recupera nada".into());
+                return Ok(());
+            };
             let ids = ctx.lib.recover()?;
             out.ok(format!("{} grabaciones recuperadas", ids.len()));
             Ok(())
         }
         "rename" => {
             let id = positional(&mut args, "id")?;
-            let title = args.join(" ");
+            let title = rest(&args);
             let entry = ctx.lib.rename(&id, &title)?;
             out.entry(&entry);
             Ok(())
         }
+        "folders" => {
+            let folders = ctx.lib.folders()?;
+            out.event(&Event::Folders { folders: folders.clone() }, || folders.join("\n"));
+            Ok(())
+        }
+        "folder" => {
+            let sub = positional(&mut args, "create|rename|delete")?;
+            match sub.as_str() {
+                "create" | "new" => {
+                    ctx.lib.create_folder(&rest(&args))?;
+                }
+                "rename" | "move" => {
+                    let from = positional(&mut args, "carpeta")?;
+                    ctx.lib.rename_folder(&from, &rest(&args))?;
+                }
+                "delete" | "rm" => {
+                    ctx.lib.delete_folder(&rest(&args))?;
+                }
+                other => return Err(format!("vroom folder: subcomando desconocido {other}")),
+            }
+            let folders = ctx.lib.folders()?;
+            out.event(&Event::Folders { folders: folders.clone() }, || folders.join("\n"));
+            Ok(())
+        }
         "move" | "mv" => {
             let id = positional(&mut args, "id")?;
-            let folder = args.join(" ");
+            let folder = rest(&args);
             let entry = ctx.lib.set_folder(&id, Some(&folder))?;
             out.entry(&entry);
             Ok(())
@@ -180,6 +214,9 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             let _lock = ctx.lock()?;
             ctx.lib.recover()?;
             let r2 = ctx.r2()?;
+            if let Err(e) = sync::push_folders(&r2, &ctx.lib) {
+                out.warning(None, &format!("carpetas: {e}"));
+            }
             upload_all(out, &ctx, &r2, &ctx.lib.pending_upload()?)?;
             for id in ctx.lib.expired_local(ctx.config.keep_local_days, OffsetDateTime::now_utc())? {
                 ctx.lib.remove_local_video(&id)?;
@@ -379,19 +416,34 @@ fn now_local() -> OffsetDateTime {
     OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc())
 }
 
+/// Flags are only looked for before `--`, so a title like "-h" can follow it.
 pub(crate) fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
-    let before = args.len();
-    args.retain(|a| a != flag);
-    args.len() != before
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    match args[..end].iter().position(|a| a == flag) {
+        Some(i) => {
+            args.remove(i);
+            true
+        }
+        None => false,
+    }
 }
 
 pub(crate) fn take_opt(args: &mut Vec<String>, name: &str) -> Option<String> {
-    let i = args.iter().position(|a| a == name)?;
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let i = args[..end].iter().position(|a| a == name)?;
     args.remove(i);
     (i < args.len()).then(|| args.remove(i))
 }
 
+/// What follows the options, joined; a leading `--` is dropped.
+fn rest(args: &[String]) -> String {
+    args.iter().filter(|a| *a != "--").cloned().collect::<Vec<_>>().join(" ")
+}
+
 fn positional(args: &mut Vec<String>, what: &str) -> Result<String, String> {
+    if args.first().is_some_and(|a| a == "--") {
+        args.remove(0);
+    }
     if args.is_empty() || args[0].starts_with("--") {
         return Err(format!("falta el argumento <{what}>"));
     }

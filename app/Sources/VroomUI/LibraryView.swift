@@ -12,6 +12,10 @@ public struct LibraryView: View {
     @State private var folder: FolderFilter = .all
     @State private var moving: Entry?
     @State private var newFolder = ""
+    /// The "new folder" / "rename folder" sheet: (parent or folder being renamed, is rename).
+    @State private var folderSheet: FolderSheet?
+    @State private var folderName = ""
+    @State private var deletingFolder: String?
 
     public init(model: AppModel) { self.model = model }
 
@@ -26,18 +30,56 @@ public struct LibraryView: View {
         List(selection: $folder) {
             Label("Todas", systemImage: "video").tag(FolderFilter.all)
             Label("Sin carpeta", systemImage: "tray").tag(FolderFilter.none)
-            if !model.folders.isEmpty {
-                Section("Carpetas") {
-                    ForEach(model.folders, id: \.self) { path in
-                        let depth = path.split(separator: "/").count - 1
-                        Label(String(path.split(separator: "/").last ?? ""), systemImage: "folder")
-                            .padding(.leading, CGFloat(depth) * 14)
-                            .tag(FolderFilter.folder(path))
-                    }
+                .dropDestination(for: String.self) { ids, _ in drop(ids, into: "") }
+            Section {
+                ForEach(model.folders, id: \.self) { path in
+                    let depth = path.split(separator: "/").count - 1
+                    Label(String(path.split(separator: "/").last ?? ""), systemImage: "folder")
+                        .padding(.leading, CGFloat(depth) * 14)
+                        .tag(FolderFilter.folder(path))
+                        .dropDestination(for: String.self) { ids, _ in drop(ids, into: path) }
+                        .contextMenu {
+                            Button("Nueva subcarpeta…") { startFolderSheet(.create(parent: path)) }
+                            Button("Renombrar…") { startFolderSheet(.rename(path)) }
+                            Divider()
+                            Button("Eliminar carpeta…", role: .destructive) { deletingFolder = path }
+                        }
+                }
+            } header: {
+                HStack {
+                    Text("Carpetas")
+                    Spacer()
+                    Button { startFolderSheet(.create(parent: nil)) } label: { Image(systemName: "folder.badge.plus") }
+                        .buttonStyle(.borderless)
+                        .help("Nueva carpeta")
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 170, ideal: 210)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+        .sheet(item: $folderSheet) { sheet in
+            VStack(alignment: .leading, spacing: 12) {
+                Text(sheet.title).font(.headline)
+                TextField("Nombre", text: $folderName).frame(width: 320).onSubmit { commitFolder(sheet) }
+                HStack {
+                    Spacer()
+                    Button("Cancelar") { folderSheet = nil }.keyboardShortcut(.cancelAction)
+                    Button(sheet.isRename ? "Renombrar" : "Crear") { commitFolder(sheet) }.keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+        }
+        .confirmationDialog(
+            "¿Eliminar la carpeta «\(deletingFolder ?? "")»?",
+            isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }),
+            presenting: deletingFolder
+        ) { path in
+            Button("Eliminar carpeta", role: .destructive) {
+                if case let .folder(selected) = folder, selected == path || selected.hasPrefix(path + "/") { folder = .all }
+                model.deleteFolder(path)
+            }
+        } message: { _ in
+            Text("Las grabaciones no se borran: pasan a la carpeta de arriba.")
+        }
     }
 
     private var grid: some View {
@@ -51,6 +93,7 @@ public struct LibraryView: View {
                     ForEach(filtered) { entry in
                         Card(entry: entry, progress: model.transfers[entry.id], cloudReady: model.cloudReady,
                              copyLink: { model.copyLink(entry) })
+                            .draggable(entry.id)
                             .onTapGesture(count: 2) { model.play(entry) }
                             .contextMenu { menu(for: entry) }
                     }
@@ -175,6 +218,36 @@ public struct LibraryView: View {
         Button("Eliminar…", role: .destructive) { deleting = entry }
     }
 
+    private func startFolderSheet(_ sheet: FolderSheet) {
+        if case let .rename(path) = sheet { folderName = String(path.split(separator: "/").last ?? "") } else { folderName = "" }
+        folderSheet = sheet
+    }
+
+    private func commitFolder(_ sheet: FolderSheet) {
+        let name = folderName.replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: .whitespacesAndNewlines)
+        folderSheet = nil
+        guard !name.isEmpty else { return }
+        switch sheet {
+        case let .create(parent):
+            let path = parent.map { "\($0)/\(name)" } ?? name
+            model.createFolder(path)
+            folder = .folder(path)
+        case let .rename(path):
+            let parent = path.split(separator: "/").dropLast().joined(separator: "/")
+            let new = parent.isEmpty ? name : "\(parent)/\(name)"
+            if new != path {
+                model.renameFolder(path, to: new)
+                folder = .folder(new)
+            }
+        }
+    }
+
+    private func drop(_ ids: [String], into path: String) -> Bool {
+        let moving = model.entries.filter { ids.contains($0.id) && ($0.folder ?? "") != path }
+        moving.forEach { model.move($0, to: path) }
+        return !moving.isEmpty
+    }
+
     private func commitMove(_ entry: Entry) {
         let f = newFolder.trimmingCharacters(in: .whitespacesAndNewlines)
         if f != (entry.folder ?? "") { model.move(entry, to: f) }
@@ -185,6 +258,28 @@ public struct LibraryView: View {
         let t = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !t.isEmpty, t != entry.title { model.rename(entry, to: t) }
         renaming = nil
+    }
+}
+
+enum FolderSheet: Identifiable {
+    case create(parent: String?)
+    case rename(String)
+
+    var id: String {
+        switch self {
+        case let .create(parent): "create:\(parent ?? "")"
+        case let .rename(path): "rename:\(path)"
+        }
+    }
+
+    var isRename: Bool { if case .rename = self { true } else { false } }
+
+    var title: String {
+        switch self {
+        case .create(nil): "Nueva carpeta"
+        case let .create(parent?): "Nueva carpeta dentro de «\(parent)»"
+        case let .rename(path): "Renombrar «\(path.split(separator: "/").last ?? "")»"
+        }
     }
 }
 

@@ -35,6 +35,8 @@ pub struct R2 {
     pub public_url: Option<String>,
     /// First retry delay; it doubles on each attempt.
     pub retry_base: Duration,
+    /// `<prefix>library/<secret>/`, found or made once per process.
+    pub private: std::sync::OnceLock<String>,
 }
 
 impl R2 {
@@ -58,6 +60,7 @@ impl R2 {
             prefix: cfg.prefix.clone(),
             public_url: cfg.public_url.as_ref().map(|u| u.trim_end_matches('/').to_string()),
             retry_base: Duration::from_millis(500),
+            private: std::sync::OnceLock::new(),
         })
     }
 
@@ -129,7 +132,8 @@ impl R2 {
     pub fn list(&self, prefix: &str) -> Result<Vec<Object>, String> {
         let mut out = Vec::new();
         let mut token: Option<String> = None;
-        loop {
+        // A million keys is far beyond any library; stop rather than loop forever.
+        for _ in 0..1000 {
             let mut list = ListObjectsV2::new(&self.bucket, Some(&self.credentials));
             list.with_prefix(prefix.to_string());
             if let Some(t) = &token {
@@ -150,6 +154,7 @@ impl R2 {
                 _ => return Ok(out),
             }
         }
+        Err("R2 devolvió demasiadas páginas al listar".into())
     }
 
     pub fn delete(&self, key: &str) -> Result<(), String> {

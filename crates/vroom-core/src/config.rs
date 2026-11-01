@@ -63,7 +63,7 @@ impl R2Config {
             return Err("faltan el bucket o el Access Key ID".into());
         }
         if let Some(u) = &self.public_url {
-            if !u.starts_with("https://") && !u.starts_with("http://") {
+            if !u.starts_with("https://") {
                 return Err("la URL pública debe empezar por https://".into());
             }
         }

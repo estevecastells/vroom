@@ -61,5 +61,11 @@ check(try {
     return e.status == .recording && abs(e.createdAt.timeIntervalSince1970 - 1_793_540_248.57461) < 0.001
 }(), "decodes fractional local-offset dates from the CLI")
 
+check(try {
+    let line = #"{"type":"folders","folders":["Clientes","Clientes/Acme"]}"#
+    guard case let .folders(f) = try JSONDecoder.vroom.decode(Event.self, from: Data(line.utf8)) else { return false }
+    return f == ["Clientes", "Clientes/Acme"]
+}(), "decodes folders")
+
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

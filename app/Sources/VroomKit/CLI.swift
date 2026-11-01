@@ -89,6 +89,11 @@ public struct CLI: Sendable {
         throw CLIError.badOutput("expected entries")
     }
 
+    public func folders(_ args: [String] = ["folders"]) async throws -> [String] {
+        for case let .folders(f) in try await run(args) { return f }
+        throw CLIError.badOutput("expected folders")
+    }
+
     public func config(_ args: [String] = [], stdin: String? = nil) async throws -> ConfigInfo {
         for case let .config(c) in try await run(["config"] + args, stdin: stdin) { return c }
         throw CLIError.badOutput("expected config")

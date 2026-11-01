@@ -19,6 +19,7 @@ pub fn upload(r2: &R2, lib: &Library, id: &str, progress: impl FnMut(u64, u64)) 
     latest.last_error = result.as_ref().err().cloned();
     if result.is_ok() {
         latest.uploaded_at = state.uploaded_at;
+        latest.meta_private = true;
         latest.meta_dirty = false;
         latest.multipart = None;
     }
@@ -37,6 +38,7 @@ fn upload_inner(
     let meta = lib.meta(id)?;
     let video = dir.join(VIDEO);
     let video_needed = state.uploaded_at.is_none();
+    let first_private = !state.meta_private;
     if video_needed {
         if !video.is_file() {
             return Err("no hay vídeo local que subir".into());
@@ -60,7 +62,6 @@ fn upload_inner(
     for file in AFTER_VIDEO {
         let bytes = match file {
             PAGE => share::page(&meta, has_thumb, has_captions).into_bytes(),
-            META => serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?,
             // Thumbnail and captions only change with the video.
             _ if !video_needed => continue,
             _ => match std::fs::read(dir.join(file)) {
@@ -71,8 +72,73 @@ fn upload_inner(
         };
         r2.put(&layout::key(&r2.prefix, id, file), &bytes, layout::content_type(file))?;
     }
+    // Last: the private metadata marks the upload complete.
+    let json = serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?;
+    r2.put(&layout::private_meta_key(&private_dir(r2)?, id), &json, "application/json")?;
+    if first_private {
+        // Older versions published meta.json next to the video.
+        r2.delete(&layout::key(&r2.prefix, id, META))?;
+    }
+    state.meta_private = true;
     if video_needed {
         state.uploaded_at = Some(OffsetDateTime::now_utc());
+    }
+    Ok(())
+}
+
+/// `<prefix>library/<secret>/`: the existing private area, or a new random one.
+pub fn private_dir(r2: &R2) -> Result<String, String> {
+    if let Some(p) = r2.private.get() {
+        return Ok(p.clone());
+    }
+    let root = layout::private_root(&r2.prefix);
+    let mut found = None;
+    let mut legacy_folders = None;
+    for o in r2.list(&root)? {
+        let rest = &o.key[root.len()..];
+        match rest.split_once('/') {
+            Some((secret, _)) if secret.len() >= 20 && vroom_core::id::is_valid(secret) => {
+                found = Some(secret.to_string());
+                break;
+            }
+            // Before the private area, the folder list sat at library/folders-<random>.json.
+            _ if rest.starts_with("folders-") => legacy_folders = Some(o.key.clone()),
+            _ => {}
+        }
+    }
+    let dir = format!("{root}{}/", found.unwrap_or_else(vroom_core::id::generate));
+    if let Some(old) = legacy_folders {
+        if let Some(bytes) = r2.get_bytes(&old)? {
+            r2.put(&format!("{dir}{}", layout::FOLDERS), &bytes, "application/json")?;
+        }
+        r2.delete(&old)?;
+    }
+    Ok(r2.private.get_or_init(|| dir).clone())
+}
+
+fn folders_key(r2: &R2) -> Result<String, String> {
+    Ok(format!("{}{}", private_dir(r2)?, layout::FOLDERS))
+}
+
+/// Upload the hand-made folder list when it changed since the last upload.
+pub fn push_folders(r2: &R2, lib: &Library) -> Result<bool, String> {
+    let local = serde_json::to_vec_pretty(&vroom_core::library::FolderList { folders: lib.saved_folders() })
+        .map_err(|e| e.to_string())?;
+    let marker = lib.root().join(".folders.uploaded");
+    if std::fs::read(&marker).ok().as_deref() == Some(local.as_slice()) {
+        return Ok(false);
+    }
+    r2.put(&folders_key(r2)?, &local, "application/json")?;
+    std::fs::write(&marker, &local).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+fn pull_folders(r2: &R2, lib: &Library) -> Result<(), String> {
+    let key = folders_key(r2)?;
+    if let Some(bytes) = r2.get_bytes(&key)? {
+        if let Ok(list) = serde_json::from_slice::<vroom_core::library::FolderList>(&bytes) {
+            lib.merge_folders(&list.folders)?;
+        }
     }
     Ok(())
 }
@@ -88,21 +154,33 @@ pub struct Restored {
 /// bucket and not on this computer comes back as a cloud-only entry, with its
 /// thumbnail. Videos stay in R2 until downloaded.
 pub fn restore(r2: &R2, lib: &Library, mut added: impl FnMut(&str)) -> Result<Restored, String> {
+    pull_folders(r2, lib)?;
+    let private = private_dir(r2)?;
     let objects = r2.list(&layout::recordings_prefix(&r2.prefix))?;
-    let ids: BTreeSet<&str> = objects
+    let private_ids: BTreeSet<String> = r2
+        .list(&format!("{private}meta/"))?
+        .iter()
+        .filter_map(|o| layout::id_from_private_meta(&private, &o.key).map(str::to_string))
+        .collect();
+    // Uploads from before the private area kept meta.json next to the video.
+    let legacy_ids: BTreeSet<String> = objects
         .iter()
         .filter(|o| o.key.ends_with(&format!("/{META}")))
-        .filter_map(|o| layout::id_from_key(&r2.prefix, &o.key))
+        .filter_map(|o| layout::id_from_key(&r2.prefix, &o.key).map(str::to_string))
         .collect();
+    let ids: BTreeSet<&String> = private_ids.iter().chain(legacy_ids.iter()).collect();
     let mut out = Restored::default();
     for id in ids {
         if lib.contains(id) {
             out.already_here += 1;
             continue;
         }
-        let Some(bytes) = r2.get_bytes(&layout::key(&r2.prefix, id, META))? else { continue };
+        let is_private = private_ids.contains(id);
+        let key = if is_private { layout::private_meta_key(&private, id) } else { layout::key(&r2.prefix, id, META) };
+        let Some(bytes) = r2.get_bytes(&key)? else { continue };
         let meta: vroom_core::Meta =
             serde_json::from_slice(&bytes).map_err(|e| format!("meta.json de {id} no es válido: {e}"))?;
+        let id = id.as_str();
         if meta.id != id {
             continue;
         }
@@ -113,7 +191,10 @@ pub fn restore(r2: &R2, lib: &Library, mut added: impl FnMut(&str)) -> Result<Re
                 std::fs::write(dir.join(THUMB), thumb).map_err(|e| e.to_string())?;
             }
         }
-        lib.write_state(id, &State { uploaded_at: Some(OffsetDateTime::now_utc()), ..State::default() })?;
+        lib.write_state(
+            id,
+            &State { uploaded_at: Some(OffsetDateTime::now_utc()), meta_private: is_private, ..State::default() },
+        )?;
         added(id);
         out.added.push(id.to_string());
     }
@@ -141,7 +222,7 @@ pub fn delete_remote(r2: &R2, lib: &Library, id: &str) -> Result<(), String> {
     for o in r2.list(&format!("{}{id}/", layout::recordings_prefix(&r2.prefix)))? {
         r2.delete(&o.key)?;
     }
-    Ok(())
+    r2.delete(&layout::private_meta_key(&private_dir(r2)?, id))
 }
 
 /// A link to watch the recording: the share page on the public URL when the

@@ -47,6 +47,8 @@ if [[ -z "$identity" ]]; then
   # scripts/make-signing-cert.sh creates a stable local identity; fall back to ad hoc.
   if security find-certificate -c "Vroom Local Signing" >/dev/null 2>&1; then identity="Vroom Local Signing"; else identity="-"; fi
 fi
-codesign --force --sign "$identity" "$app/Contents/Resources/vroom" >/dev/null
-codesign --force --sign "$identity" "$app" >/dev/null
+# Hardened runtime: other processes can't inject code to borrow the app's
+# Screen Recording, camera and microphone permissions.
+codesign --force --options runtime --sign "$identity" "$app/Contents/Resources/vroom" >/dev/null
+codesign --force --options runtime --entitlements app/Vroom.entitlements --sign "$identity" "$app" >/dev/null
 echo "==> Done: $root/$app"

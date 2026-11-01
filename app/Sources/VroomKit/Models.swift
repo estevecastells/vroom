@@ -76,6 +76,7 @@ public enum Event: Decodable, Equatable, Sendable {
     case version(String, protocol: Int)
     case entries([Entry])
     case entry(Entry)
+    case folders([String])
     case config(ConfigInfo)
     case progress(id: String, done: Int64, total: Int64)
     case done(id: String, what: String)
@@ -85,7 +86,7 @@ public enum Event: Decodable, Equatable, Sendable {
     case error(String)
 
     private enum Keys: String, CodingKey {
-        case type, version, `protocol`, entries, entry, config, path, library, hasSecret, id, done, total, what, url,
+        case type, version, `protocol`, entries, entry, folders, config, path, library, hasSecret, id, done, total, what, url,
             expiresAt, message
     }
 
@@ -96,6 +97,7 @@ public enum Event: Decodable, Equatable, Sendable {
             self = .version(try c.decode(String.self, forKey: .version), protocol: try c.decode(Int.self, forKey: .protocol))
         case "entries": self = .entries(try c.decode([Entry].self, forKey: .entries))
         case "entry": self = .entry(try c.decode(Entry.self, forKey: .entry))
+        case "folders": self = .folders(try c.decode([String].self, forKey: .folders))
         case "config":
             self = .config(ConfigInfo(
                 config: try c.decode(Config.self, forKey: .config),

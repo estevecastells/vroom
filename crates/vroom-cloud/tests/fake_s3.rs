@@ -193,7 +193,7 @@ fn r2(endpoint: &str) -> R2 {
 }
 
 fn recording(lib: &Library, size: usize) -> (String, Vec<u8>) {
-    let e = lib.create(Some("Demo".into()), datetime!(2026-11-01 13:00 UTC)).unwrap();
+    let e = lib.create(Some("Demo".into()), datetime!(2026-11-01 13:00 UTC), 0).unwrap();
     let video: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     std::fs::write(e.dir.join(VIDEO), &video).unwrap();
     std::fs::write(e.dir.join(THUMB), [0xFF, 0xD8, 1, 2]).unwrap();
@@ -215,7 +215,10 @@ fn small_upload_restore_and_delete() {
     {
         let s = store.lock().unwrap();
         assert_eq!(s.objects[&format!("team/recordings/{id}/{VIDEO}")], video);
-        assert!(s.objects.contains_key(&format!("team/recordings/{id}/{META}")));
+        assert!(!s.objects.contains_key(&format!("team/recordings/{id}/{META}")), "metadata is not public");
+        let private =
+            s.objects.keys().find(|k| k.starts_with("team/library/") && k.ends_with(&format!("/meta/{id}.json")));
+        assert!(private.is_some_and(|k| k.len() > "team/library//meta/.json".len() + id.len() + 16));
         assert!(String::from_utf8_lossy(&s.objects[&format!("team/recordings/{id}/{PAGE}")]).contains("Demo"));
     }
 
@@ -236,11 +239,51 @@ fn small_upload_restore_and_delete() {
     assert_eq!(lib.pending_upload().unwrap(), vec![id.clone()]);
     sync::upload(&r2, &lib, &id, |_, _| {}).unwrap();
     assert!(lib.pending_upload().unwrap().is_empty());
-    assert!(String::from_utf8_lossy(&store.lock().unwrap().objects[&format!("team/recordings/{id}/{META}")])
-        .contains("Demo final"));
+    let renamed =
+        store.lock().unwrap().objects.iter().any(|(k, v)| {
+            k.ends_with(&format!("/meta/{id}.json")) && String::from_utf8_lossy(v).contains("Demo final")
+        });
+    assert!(renamed);
+
+    // Hand-made folders travel under a random key, never a guessable one.
+    lib.create_folder("Clientes/Acme").unwrap();
+    assert!(sync::push_folders(&r2, &lib).unwrap());
+    assert!(!sync::push_folders(&r2, &lib).unwrap(), "unchanged: not uploaded again");
+    let key = store.lock().unwrap().objects.keys().find(|k| k.ends_with("/folders.json")).cloned().unwrap();
+    assert!(key.starts_with("team/library/") && key.len() > "team/library//folders.json".len() + 16);
+    let third = Library::open(tmp.path().join("c")).unwrap();
+    sync::restore(&r2, &third, |_| {}).unwrap();
+    assert_eq!(third.saved_folders(), vec!["Clientes/Acme"]);
+    store.lock().unwrap().objects.remove(&key);
 
     sync::delete_remote(&r2, &lib, &id).unwrap();
     assert!(store.lock().unwrap().objects.is_empty());
+}
+
+/// Recordings uploaded before the private area (public meta.json) restore
+/// fine and get migrated by the next upload.
+#[test]
+fn legacy_public_meta_is_migrated() {
+    let (endpoint, store) = serve();
+    let r2 = r2(&endpoint);
+    let tmp = tempfile::tempdir().unwrap();
+    let old = Library::open(tmp.path().join("old")).unwrap();
+    let (id, _) = recording(&old, 1000);
+    let meta = serde_json::to_vec(&old.meta(&id).unwrap()).unwrap();
+    {
+        let mut s = store.lock().unwrap();
+        s.objects.insert(format!("team/recordings/{id}/{META}"), meta);
+        s.objects.insert(format!("team/recordings/{id}/{VIDEO}"), b"v".to_vec());
+    }
+    let lib = Library::open(tmp.path().join("new")).unwrap();
+    assert_eq!(sync::restore(&r2, &lib, |_| {}).unwrap().added, vec![id.clone()]);
+    assert_eq!(lib.pending_upload().unwrap(), vec![id.clone()], "needs migrating");
+    sync::upload(&r2, &lib, &id, |_, _| {}).unwrap();
+    let s = store.lock().unwrap();
+    assert!(!s.objects.contains_key(&format!("team/recordings/{id}/{META}")));
+    assert!(s.objects.keys().any(|k| k.ends_with(&format!("/meta/{id}.json"))));
+    drop(s);
+    assert!(lib.pending_upload().unwrap().is_empty());
 }
 
 #[test]
