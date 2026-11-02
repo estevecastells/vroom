@@ -242,13 +242,17 @@ fn run(out: &Out, mut args: Vec<String>) -> Result<(), String> {
             upload_all(out, &ctx, &r2, &ids)
         }
         "sync" => {
+            // The apps' background syncs pass --uploaded-only while automatic uploads are
+            // off: only interrupted uploads and recordings already in R2 are touched.
+            let started_only = take_flag(&mut args, "--uploaded-only");
             let _lock = ctx.lock()?;
             ctx.lib.recover()?;
             let r2 = ctx.r2()?;
             if let Err(e) = sync::push_folders(&r2, &ctx.lib) {
                 out.warning(None, &tr!("carpetas: {e}", e));
             }
-            upload_all(out, &ctx, &r2, &ctx.lib.pending_upload()?)?;
+            let ids = if started_only { ctx.lib.pending_started_upload()? } else { ctx.lib.pending_upload()? };
+            upload_all(out, &ctx, &r2, &ids)?;
             for id in ctx.lib.expired_local(ctx.config.keep_local_days, OffsetDateTime::now_utc())? {
                 ctx.lib.remove_local_video(&id)?;
                 out.done(&id, "freed");

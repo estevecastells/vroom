@@ -96,7 +96,7 @@ enum Action {
     CopyLink(Entry),
     Reveal(Entry),
     Transcribe(Entry),
-    Upload,
+    Upload(Entry),
     Free(Entry),
     Download(Entry),
     Dialog(Dialog),
@@ -131,6 +131,10 @@ pub struct VroomApp {
     model_download: Option<f64>,
     syncing: bool,
     sync_again: bool,
+    /// Recordings the user chose to upload now (they go up even with automatic uploads off).
+    requested_uploads: Vec<String>,
+    /// The Sync button was pressed: the next sync uploads everything pending.
+    sync_all_requested: bool,
     toast: Option<(String, Instant)>,
     error: Option<String>,
     filter: Filter,
@@ -182,6 +186,8 @@ impl VroomApp {
             model_download: None,
             syncing: false,
             sync_again: false,
+            requested_uploads: Vec::new(),
+            sync_all_requested: false,
             toast: None,
             error,
             filter: Filter::All,
@@ -357,30 +363,53 @@ impl VroomApp {
 
     // MARK: Cloud
 
-    /// Upload everything pending. Runs once at a time; asks made meanwhile run after it.
+    fn auto_upload(&self) -> bool {
+        self.config.as_ref().is_some_and(|(c, _, _)| c.auto_upload)
+    }
+
+    /// Background sync (startup, new captions, renames...). New recordings go up only when
+    /// "upload after recording" is on (unknown until the config loads counts as off);
+    /// otherwise it only resumes uploads that already started and keeps recordings already
+    /// in R2 up to date. Runs once at a time; asks made meanwhile run after it.
     fn sync(&mut self) {
+        self.start_sync(false);
+    }
+
+    /// The Sync button: everything pending goes up, as the user asked.
+    fn sync_all(&mut self) {
+        self.start_sync(true);
+    }
+
+    /// "Upload now" on one recording uploads that recording, not the whole library.
+    fn upload(&mut self, entry: &Entry) {
+        if !self.requested_uploads.contains(&entry.meta.id) {
+            self.requested_uploads.push(entry.meta.id.clone());
+        }
+        self.sync();
+    }
+
+    fn start_sync(&mut self, all: bool) {
         if !self.cloud_ready() && self.config.is_some() {
             return;
+        }
+        if all {
+            self.sync_all_requested = true;
         }
         if self.syncing {
             self.sync_again = true;
             return;
         }
         self.syncing = true;
-        self.spawn(|cli, mail| {
-            let result = cli.stream_coded(&["sync"], None, &[], |e| match e {
-                Event::Progress { id, done, total } if total > 0 => {
-                    mail.send(Msg::Transfer(id, Some(done as f64 / total as f64)))
-                }
-                Event::Done { id, .. } => mail.send(Msg::Transfer(id, None)),
-                Event::Warning { message, .. } => mail.send(Msg::Error(message)),
-                _ => {}
-            });
-            if let Err((m, code)) = result {
-                if !is_quiet(&code) {
-                    mail.send(Msg::Error(m));
-                }
+        let uploads = std::mem::take(&mut self.requested_uploads);
+        let everything = std::mem::take(&mut self.sync_all_requested) || self.auto_upload();
+        self.spawn(move |cli, mail| {
+            if !uploads.is_empty() {
+                let mut args = vec!["upload"];
+                args.extend(uploads.iter().map(String::as_str));
+                run_cloud(cli, mail, &args);
             }
+            let sync_args: &[&str] = if everything { &["sync"] } else { &["sync", "--uploaded-only"] };
+            run_cloud(cli, mail, sync_args);
             mail.send(Msg::SyncFinished);
             load_library(cli, mail);
         });
@@ -431,7 +460,13 @@ impl VroomApp {
                 if self.library_path.is_empty() {
                     self.library_path = library.clone();
                 }
+                let first = self.config.is_none();
                 self.config = Some((config, library, has_secret));
+                // The startup sync ran before the config was known, so it left new recordings
+                // alone; with automatic uploads on, they go up now.
+                if first && self.auto_upload() {
+                    self.sync();
+                }
             }
             Msg::Transcriber { model, whisper } => self.transcriber = (model, whisper),
             Msg::Transfer(id, Some(p)) => {
@@ -548,7 +583,7 @@ impl VroomApp {
                 let _ = std::process::Command::new("explorer").arg(arg).spawn();
             }
             Action::Transcribe(entry) => self.transcribe(&entry),
-            Action::Upload => self.sync(),
+            Action::Upload(entry) => self.upload(&entry),
             Action::Free(entry) => {
                 self.run_then_refresh(vec!["free".into(), entry.meta.id], t("Copia local borrada; sigue en R2"))
             }
@@ -602,6 +637,23 @@ impl VroomApp {
             load_config(cli, mail);
             load_library(cli, mail);
         });
+    }
+}
+
+/// Run an upload/sync command, forwarding its progress and warnings to the UI.
+fn run_cloud(cli: &Cli, mail: &Mailbox, args: &[&str]) {
+    let result = cli.stream_coded(args, None, &[], |e| match e {
+        Event::Progress { id, done, total } if total > 0 => {
+            mail.send(Msg::Transfer(id, Some(done as f64 / total as f64)))
+        }
+        Event::Done { id, .. } => mail.send(Msg::Transfer(id, None)),
+        Event::Warning { message, .. } => mail.send(Msg::Error(message)),
+        _ => {}
+    });
+    if let Err((m, code)) = result {
+        if !is_quiet(&code) {
+            mail.send(Msg::Error(m));
+        }
     }
 }
 
@@ -766,7 +818,7 @@ impl VroomApp {
                 if self.syncing {
                     ui.spinner();
                 } else if ui.add_enabled(self.cloud_ready(), egui::Button::new(t("Sincronizar"))).clicked() {
-                    self.sync();
+                    self.sync_all();
                 }
             });
         });
@@ -923,7 +975,7 @@ impl VroomApp {
             match entry.status {
                 Status::Local | Status::Uploading => {
                     if ui.add_enabled(self.cloud_ready(), egui::Button::new(t("Subir ahora"))).clicked() {
-                        pick(Action::Upload);
+                        pick(Action::Upload(entry.clone()));
                     }
                 }
                 Status::Synced => {

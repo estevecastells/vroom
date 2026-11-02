@@ -472,11 +472,23 @@ impl Library {
     }
 
     pub fn pending_upload(&self) -> Result<Vec<String>, String> {
+        self.pending(true)
+    }
+
+    /// What a background sync may send while automatic uploads are off: uploads that
+    /// already started and metadata/captions of recordings already in R2. A recording
+    /// that never went up stays on this computer until the user uploads it.
+    pub fn pending_started_upload(&self) -> Result<Vec<String>, String> {
+        self.pending(false)
+    }
+
+    fn pending(&self, include_new: bool) -> Result<Vec<String>, String> {
         Ok(self
             .list()?
             .into_iter()
             .filter(|e| match e.status {
-                Status::Local | Status::Uploading => e.video.is_some(),
+                Status::Local => include_new && e.video.is_some(),
+                Status::Uploading => e.video.is_some(),
                 Status::Synced | Status::Cloud => {
                     let s = self.state(&e.meta.id);
                     s.meta_dirty || !s.meta_private || self.captions_pending(&e.meta.id)
@@ -548,6 +560,7 @@ mod tests {
         let e = lib.finalize(&id, 12.5, 1920, 1080).unwrap();
         assert_eq!((e.status, e.meta.size_bytes, e.meta.width), (Status::Local, 1000, 1920));
         assert_eq!(lib.pending_upload().unwrap(), vec![id.clone()]);
+        assert!(lib.pending_started_upload().unwrap().is_empty(), "with uploads off a new recording stays local");
         assert!(lib.remove_local_video(&id).is_err(), "never delete the only copy");
 
         let mut s = lib.state(&id);
@@ -557,10 +570,12 @@ mod tests {
         let e = lib.entry(&id).unwrap();
         assert_eq!(e.status, Status::Uploading);
         assert_eq!(e.progress, Some(0.4));
+        assert_eq!(lib.pending_started_upload().unwrap(), vec![id.clone()], "an interrupted upload resumes");
 
         lib.write_state(&id, &State { uploaded_at: Some(NOW), meta_private: true, ..State::default() }).unwrap();
         assert_eq!(lib.entry(&id).unwrap().status, Status::Synced);
         assert!(lib.pending_upload().unwrap().is_empty());
+        assert!(lib.pending_started_upload().unwrap().is_empty());
         assert_eq!(lib.expired_local(30, NOW + time::Duration::days(31)).unwrap(), vec![id.clone()]);
         assert!(lib.expired_local(30, NOW + time::Duration::days(29)).unwrap().is_empty());
 
@@ -568,6 +583,7 @@ mod tests {
         assert_eq!(lib.meta(&id).unwrap().folder.as_deref(), Some("Clientes/Acme"));
         lib.rename(&id, "Demo").unwrap();
         assert_eq!(lib.pending_upload().unwrap(), vec![id.clone()], "renamed: meta goes up again");
+        assert_eq!(lib.pending_started_upload().unwrap(), vec![id.clone()], "metadata of cloud recordings still syncs");
 
         let e = lib.remove_local_video(&id).unwrap();
         assert_eq!(e.status, Status::Cloud);

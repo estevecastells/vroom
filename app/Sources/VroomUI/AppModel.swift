@@ -106,6 +106,10 @@ public final class AppModel {
     private var startTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     private var syncAgain = false
+    /// Recordings the user chose to upload now (they go up even with automatic uploads off).
+    private var requestedUploads: [String] = []
+    /// The Sync button was pressed: the next sync uploads everything pending.
+    private var syncAllRequested = false
     private var transcribeQueue: [String] = []
     private let pathMonitor = NWPathMonitor()
     private var hotKey: HotKey?
@@ -447,9 +451,18 @@ public final class AppModel {
 
     // MARK: Cloud
 
-    /// Upload everything pending. Runs once at a time; asks made meanwhile run after it.
-    func sync() {
+    /// Background sync (startup, network back, new captions, renames...). New recordings
+    /// go up only when "upload after recording" is on; otherwise it only resumes uploads
+    /// that already started and keeps recordings already in R2 up to date.
+    /// Runs once at a time; asks made meanwhile run after it.
+    func sync() { startSync(all: false) }
+
+    /// The Sync button: everything pending goes up, as the user asked.
+    func syncAll() { startSync(all: true) }
+
+    private func startSync(all: Bool) {
         guard cloudReady, let cli else { return }
+        if all { syncAllRequested = true }
         if syncing {
             syncAgain = true
             return
@@ -459,16 +472,25 @@ public final class AppModel {
             defer { syncing = false }
             repeat {
                 syncAgain = false
-                do {
-                    try await cli.stream(["sync"]) { event in
-                        Task { @MainActor [weak self] in self?.handle(event) }
-                    }
-                } catch {
-                    if !Self.isQuiet(error) { lastError = error.localizedDescription }
-                }
+                let uploads = requestedUploads
+                requestedUploads = []
+                let everything = syncAllRequested || config?.config.autoUpload == true
+                syncAllRequested = false
+                if !uploads.isEmpty { await runCloudCommand(cli, ["upload"] + uploads) }
+                await runCloudCommand(cli, everything ? ["sync"] : ["sync", "--uploaded-only"])
                 transfers = [:]
                 await refresh()
             } while syncAgain
+        }
+    }
+
+    private func runCloudCommand(_ cli: CLI, _ args: [String]) async {
+        do {
+            try await cli.stream(args) { event in
+                Task { @MainActor [weak self] in self?.handle(event) }
+            }
+        } catch {
+            if !Self.isQuiet(error) { lastError = error.localizedDescription }
         }
     }
 
@@ -534,7 +556,11 @@ public final class AppModel {
         NSWorkspace.shared.activateFileViewerSelecting([entry.videoURL ?? entry.dirURL])
     }
 
-    func upload(_ entry: Entry) { sync() }
+    /// "Upload now" on one recording uploads that recording, not the whole library.
+    func upload(_ entry: Entry) {
+        if !requestedUploads.contains(entry.id) { requestedUploads.append(entry.id) }
+        sync()
+    }
 
     func download(_ entry: Entry) {
         guard let cli else { return }

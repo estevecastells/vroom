@@ -142,7 +142,7 @@ public struct LibraryView: View {
                 if model.syncing {
                     ProgressView().controlSize(.small)
                 } else if model.cloudReady {
-                    Button { model.sync() } label: { Label("Sincronizar", systemImage: "arrow.triangle.2.circlepath.icloud") }
+                    Button { model.syncAll() } label: { Label("Sincronizar", systemImage: "arrow.triangle.2.circlepath.icloud") }
                         .help("Sube lo pendiente ahora")
                 }
                 Button { model.toggleRecording() } label: {
