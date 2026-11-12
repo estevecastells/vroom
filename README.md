@@ -96,7 +96,7 @@ make install   # copy it to /Applications
 make test      # Rust tests (including a fake S3 server) + Swift protocol checks
 ```
 
-The first recording asks for Screen Recording permission (then reopen the app), and for the camera and microphone if you use them. An ad-hoc signature changes with every build, and macOS then forgets the permission. Run `scripts/make-signing-cert.sh` once: it creates a local self-signed identity that `make app` picks up from then on, so permissions survive rebuilds.
+The first recording asks for Screen Recording permission (then reopen the app), and for the camera and microphone if you use them. An ad-hoc signature changes with every build, and macOS then forgets the permission. Run `scripts/make-signing-cert.sh` once: it creates a local self-signed identity that `make app` picks up from then on, so permissions survive rebuilds. Installed releases keep their permissions across updates and update themselves (Settings › Recording); see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Connect Cloudflare R2
 

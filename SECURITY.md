@@ -25,3 +25,7 @@ Please report vulnerabilities privately via [GitHub security advisories](https:/
   computer.
 - Release binaries carry build provenance attestations:
   `gh attestation verify <file> --repo estevecastells/vroom`.
+- The Mac app updates itself only with a release whose `SHA256SUMS` carries a
+  valid Ed25519 signature from a key embedded in the app, and whose zip
+  matches that checksum, bundle identifier, version and code signature. The
+  private key exists only as a repository secret (docs/RELEASING.md).

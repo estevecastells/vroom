@@ -62,8 +62,36 @@ private struct RecordingSettings: View {
                 Text("⌥⇧R empieza y termina una grabación desde cualquier app. La cámara aparece como una burbuja que puedes arrastrar; la barra de control no sale en el vídeo.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            UpdateSettings(updates: model.updates, busy: model.isBusy)
         }
         .formStyle(.grouped)
+    }
+}
+
+@MainActor
+private struct UpdateSettings: View {
+    let updates: Updates
+    let busy: Bool
+    @State private var autoInstall = true
+
+    var body: some View {
+        Section {
+            Toggle("Instalar actualizaciones automáticamente", isOn: Binding(
+                get: { autoInstall }, set: { autoInstall = $0; updates.autoInstall = $0 }))
+            Text("Nunca en mitad de una grabación, una subida o una transcripción: espera a que acaben.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Versión \(Updates.currentVersion.description)").foregroundStyle(.secondary)
+                Spacer()
+                Link(destination: URL(string: "https://github.com/\(UpdateConfig.repo)/releases")!) {
+                    Text(verbatim: "GitHub")
+                }
+                Button("Buscar actualizaciones") { Task { await updates.check(userInitiated: true) } }
+                    .disabled(updates.state == .checking)
+            }
+            UpdateRow(updates: updates, busy: busy)
+        }
+        .onAppear { autoInstall = updates.autoInstall }
     }
 }
 

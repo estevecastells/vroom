@@ -5,16 +5,24 @@ import VroomKit
 
 public struct MenuBarLabel: View {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     public init(model: AppModel) { self.model = model }
 
     public var body: some View {
-        switch model.phase {
-        case .recording(_, nil, _): Image(systemName: "record.circle.fill").symbolRenderingMode(.multicolor)
-        case .recording: Image(systemName: "pause.circle")
-        case .preparing, .saving: Image(systemName: "ellipsis.circle")
-        case .idle: Image(systemName: model.syncing ? "icloud.and.arrow.up" : "video.circle")
+        Group {
+            switch model.phase {
+            case .recording(_, nil, _): Image(systemName: "record.circle.fill").symbolRenderingMode(.multicolor)
+            case .recording: Image(systemName: "pause.circle")
+            case .preparing, .saving: Image(systemName: "ellipsis.circle")
+            case .idle: Image(systemName: model.syncing ? "icloud.and.arrow.up" : "video.circle")
+            }
         }
+        // Menu bar managers (Thaw, Ice, Bartender) tell items apart by this name. Without it
+        // each symbol's own description ("FaceTime video call", "iCloud upload") made the icon
+        // look like a different item whenever it changed, and they hid or moved it.
+        .accessibilityLabel(Text(verbatim: "Vroom"))
+        .onAppear { model.windowOpener = { openWindow(id: $0) } }
     }
 }
 
@@ -47,6 +55,7 @@ public struct MenuContent: View {
                 }
             }
             if let toast = model.toast { Text(toast).font(.caption).foregroundStyle(.secondary) }
+            UpdateRow(updates: model.updates, busy: model.isBusy)
             if !model.cloudReady {
                 Button { show("settings") } label: {
                     Label("Conecta Cloudflare R2 para guardar copia en la nube", systemImage: "icloud.slash")
@@ -242,6 +251,51 @@ enum Format {
                 ?? String(localized: "Subiendo a R2")
         case .synced: return String(localized: "En este Mac y en R2")
         case .cloud: return String(localized: "Solo en R2")
+        }
+    }
+}
+
+/// Update status in the menu; nothing while there is nothing to say.
+@MainActor
+struct UpdateRow: View {
+    let updates: Updates
+    let busy: Bool
+
+    var body: some View {
+        switch updates.state {
+        case .idle:
+            EmptyView()
+        case .checking:
+            Label("Buscando actualizaciones…", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption).foregroundStyle(.secondary)
+        case .upToDate:
+            Label("Vroom \(Updates.currentVersion.description) está al día", systemImage: "checkmark.circle")
+                .font(.caption).foregroundStyle(.secondary)
+        case let .available(version, notes):
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Label("Vroom \(version) disponible", systemImage: "arrow.down.circle.fill").font(.callout)
+                    Spacer()
+                    Link("Novedades", destination: notes).font(.caption)
+                    Button("Actualizar") { Task { await updates.install() } }
+                        .controlSize(.small)
+                        .disabled(busy)
+                }
+                if busy {
+                    Text(updates.autoInstall
+                        ? "Se instalará al acabar la grabación, la subida o la transcripción en curso."
+                        : "Podrás actualizar al acabar la grabación, la subida o la transcripción en curso.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        case let .installing(step):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(step).font(.caption).foregroundStyle(.secondary)
+            }
+        case let .failed(message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -91,6 +91,11 @@ public final class AppModel {
     private(set) var openAtLogin = SMAppService.mainApp.status == .enabled
     /// macOS only reports a newly granted Screen Recording permission after a relaunch.
     private(set) var canRecordScreen = Devices.canRecordScreen
+    /// In-app updates from GitHub Releases.
+    public let updates = Updates()
+    /// Opens one of the app's windows ("library", "settings"); set by the menu bar label,
+    /// which has SwiftUI's `openWindow` and exists for as long as the app runs.
+    var windowOpener: ((String) -> Void)?
 
     var prefs = Prefs.load() {
         didSet { if prefs != oldValue { prefs.save() } }
@@ -125,7 +130,27 @@ public final class AppModel {
                 if !open { NSApp.setActivationPolicy(.accessory) }
             }
         }
+        updates.isBusy = { [weak self] in self?.isBusy ?? false }
+        updates.start()
         Task { await boot() }
+    }
+
+    /// Doing something that quitting the app (to install an update) would cut short.
+    var isBusy: Bool {
+        phase != .idle || syncing || !transfers.isEmpty || !transcribing.isEmpty || modelDownload != nil
+    }
+
+    public func openLibrary() { showWindow("library") }
+
+    /// Bring a window to the front. A menu bar app's windows only come forward while it
+    /// is a regular app, so it becomes one until its last window closes (see `init`).
+    func showWindow(_ id: String) {
+        NSApp.setActivationPolicy(.regular)
+        windowOpener?(id)
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            NSApp.windows.first { $0.identifier?.rawValue.contains(id) == true }?.makeKeyAndOrderFront(nil)
+        }
     }
 
     private func boot() async {

@@ -1,6 +1,7 @@
 // Protocol conformance checks for VroomKit: `swift run KitChecks`.
 // Wire fixtures live in /fixtures and are shared with the Rust tests.
 
+import CryptoKit
 import Foundation
 import VroomKit
 
@@ -76,6 +77,52 @@ check(try {
     guard case let .transcriber(model, whisper) = try decode("transcriber.json") else { return false }
     return model?.hasSuffix("ggml-large-v3-turbo-q5_0.bin") == true && whisper == "/opt/homebrew/bin/whisper-cli"
 }(), "decodes the transcriber status")
+
+// Updates: versions, release JSON, signatures and checksums.
+check(Version("v0.10.0")! > Version("0.9.9")! && Version("1.0")! == Version("1.0.0")! && Version("0.1.0")! < Version("0.1.1")!,
+      "version ordering")
+check(Version("v1.x") == nil && Version("") == nil && Version("1..2") == nil && Version("1.") == nil, "invalid versions rejected")
+check(try {
+    let json = #"""
+    {"tag_name": "v0.2.0", "html_url": "https://github.com/estevecastells/vroom/releases/tag/v0.2.0",
+     "draft": false, "prerelease": false, "body": "Notes",
+     "assets": [
+      {"name": "Vroom-macos-arm64.zip", "browser_download_url": "https://github.com/estevecastells/vroom/releases/download/v0.2.0/Vroom-macos-arm64.zip", "size": 1},
+      {"name": "SHA256SUMS", "browser_download_url": "https://github.com/estevecastells/vroom/releases/download/v0.2.0/SHA256SUMS", "size": 1}
+     ]}
+    """#
+    let r = try Release.decode(Data(json.utf8))
+    return r.version == Version("0.2.0") && !r.draft && r.asset(UpdateConfig.appAsset) != nil && r.asset("nope") == nil
+}(), "decodes a GitHub release")
+check(!UpdateConfig.publicKeys.isEmpty && (try? ReleaseVerifier(publicKeysBase64: UpdateConfig.publicKeys)) != nil,
+      "embedded public keys are valid")
+
+let testKey = Curve25519.Signing.PrivateKey()
+let payload = Data("abc123  Vroom-macos-arm64.zip\ndef456  vroom-macos-arm64.tar.gz\n".utf8)
+let verifier = try! ReleaseVerifier(publicKeyBase64: testKey.publicKey.rawRepresentation.base64EncodedString())
+let goodSig = Data(try! testKey.signature(for: payload).base64EncodedString().utf8)
+check(try verifier.verifiedSums(sums: payload, signature: goodSig)["Vroom-macos-arm64.zip"] == "abc123",
+      "valid signature accepted")
+check((try? verifier.verifiedSums(sums: payload + Data("x".utf8), signature: goodSig)) == nil, "tampered sums rejected")
+let otherSig = Data(try! Curve25519.Signing.PrivateKey().signature(for: payload).base64EncodedString().utf8)
+check((try? verifier.verifiedSums(sums: payload, signature: otherSig)) == nil, "signature from another key rejected")
+let rotated = try! ReleaseVerifier(publicKeysBase64: [
+    Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString(),
+    testKey.publicKey.rawRepresentation.base64EncodedString(),
+])
+check((try? rotated.verifiedSums(sums: payload, signature: goodSig)) != nil, "signature from any listed key accepted")
+check((try? rotated.verifiedSums(sums: payload, signature: otherSig)) == nil, "signature from an unlisted key rejected")
+check((try? ReleaseVerifier(publicKeysBase64: [])) == nil, "an empty key list is refused")
+check(ReleaseVerifier.parseSums("ABC  *a.zip\nbad line\n")["a.zip"] == "abc", "parses binary-mode shasum lines")
+
+let tmpFile = FileManager.default.temporaryDirectory.appendingPathComponent("kitchecks-\(getpid()).bin")
+try! Data("hello".utf8).write(to: tmpFile)
+let helloHex = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+check((try? ReleaseVerifier.check(tmpFile, named: "f", in: ["f": helloHex])) != nil, "checksum match")
+check((try? ReleaseVerifier.check(tmpFile, named: "f", in: ["f": String(repeating: "0", count: 64)])) == nil,
+      "checksum mismatch rejected")
+check((try? ReleaseVerifier.check(tmpFile, named: "g", in: ["f": helloHex])) == nil, "missing checksum entry rejected")
+try? FileManager.default.removeItem(at: tmpFile)
 
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

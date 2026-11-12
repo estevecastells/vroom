@@ -231,3 +231,28 @@
 "guardada en el llavero" = "saved in the keychain";
 "Quitar" = "Remove";
 "Con una clave de la API de Anthropic, Claude pone título a cada grabación transcrita que aún tenga el título por defecto. Se envía solo el texto de los subtítulos, nunca el vídeo." = "With an Anthropic API key, Claude titles each transcribed recording that still has its default title. Only the caption text is sent, never the video.";
+
+/* Updates */
+"Buscando actualizaciones…" = "Checking for updates…";
+"Vroom %@ está al día" = "Vroom %@ is up to date";
+"Vroom %@ disponible" = "Vroom %@ is available";
+"Novedades" = "What's new";
+"Actualizar" = "Update";
+"Se instalará al acabar la grabación, la subida o la transcripción en curso." = "It will install once the current recording, upload or transcription finishes.";
+"Podrás actualizar al acabar la grabación, la subida o la transcripción en curso." = "You can update once the current recording, upload or transcription finishes.";
+"Instalar actualizaciones automáticamente" = "Install updates automatically";
+"Nunca en mitad de una grabación, una subida o una transcripción: espera a que acaben." = "Never in the middle of a recording, upload or transcription: it waits for them to finish.";
+"Versión %@" = "Version %@";
+"Buscar actualizaciones" = "Check for Updates";
+"No se han podido buscar actualizaciones: %@" = "Couldn't check for updates: %@";
+"no se está ejecutando desde una app" = "not running from an app bundle";
+"Descargando…" = "Downloading…";
+"Instalando…" = "Installing…";
+"la descarga no contiene ninguna app" = "no app in the download";
+"identificador de app inesperado" = "unexpected bundle identifier";
+"la versión no coincide con la publicada" = "version doesn't match the release";
+"%@ ha fallado" = "%@ failed";
+"La firma de la actualización no es válida, así que no se ha instalado." = "The update's signature didn't verify, so it wasn't installed.";
+"%@ no coincide con su suma de comprobación publicada, así que no se ha instalado." = "%@ doesn't match its published checksum, so it wasn't installed.";
+"A la versión publicada le falta %@." = "The release is missing %@.";
+"La app descargada no parece correcta (%@), así que no se ha instalado." = "The downloaded app looks wrong (%@), so it wasn't installed.";

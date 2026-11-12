@@ -33,8 +33,31 @@ jobs:
         run: |
           cargo test --locked
           (cd app && swift run -c debug KitChecks)
+      # A stable certificate keeps the designated requirement the same from release to
+      # release, so macOS keeps Vroom's Screen Recording, camera and microphone permissions
+      # when the app updates itself. An ad-hoc build would lose them on every update.
+      - name: Import the code signing identity
+        env:
+          P12: ${{ secrets.VROOM_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.VROOM_SIGNING_P12_PASSWORD }}
+        run: |
+          test -n "$P12" && test -n "$P12_PASSWORD" || { echo "VROOM_SIGNING_P12(_PASSWORD) secrets are missing" >&2; exit 1; }
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kc_pass="$(openssl rand -hex 16)"
+          security create-keychain -p "$kc_pass" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kc_pass" "$kc"
+          printf %s "$P12" | base64 --decode > "$RUNNER_TEMP/id.p12"
+          security import "$RUNNER_TEMP/id.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign >/dev/null
+          rm "$RUNNER_TEMP/id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          echo "VROOM_SIGN_IDENTITY=Vroom Release Signing" >> "$GITHUB_ENV"
       - name: Package
-        run: scripts/package-release.sh
+        run: |
+          scripts/package-release.sh
+          codesign -dr - build/Vroom.app 2>&1 | grep -q 'certificate leaf' \
+            || { echo "Vroom.app is not signed with the release identity" >&2; exit 1; }
       - name: Smoke-test the packaged CLI
         run: |
           mkdir -p /tmp/smoke && tar -xzf dist/vroom-macos-arm64.tar.gz -C /tmp/smoke
@@ -73,7 +96,8 @@ jobs:
 
   publish:
     needs: [macos, windows]
-    runs-on: ubuntu-latest
+    # macOS, for CryptoKit: scripts/sign-update.swift signs the checksums.
+    runs-on: macos-15
     permissions:
       contents: write
       id-token: write
@@ -94,13 +118,21 @@ jobs:
             dist/Vroom-macos-arm64.zip
             dist/vroom-macos-arm64.tar.gz
             dist/vroom-windows-x64.zip
+      - name: Checksums and update signature
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          cd dist
+          shasum -a 256 Vroom-macos-arm64.zip vroom-macos-arm64.tar.gz vroom-windows-x64.zip > SHA256SUMS
+          swift ../scripts/sign-update.swift SHA256SUMS > SHA256SUMS.sig
+          # The in-app updater refuses unsigned releases, so never publish one.
+          test -s SHA256SUMS.sig
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           cd dist
-          sha256sum Vroom-macos-arm64.zip vroom-macos-arm64.tar.gz vroom-windows-x64.zip > SHA256SUMS
           cat > NOTES.md <<'NOTES'
           ## Install on a Mac (Apple Silicon, macOS 14+)
 
@@ -111,10 +143,13 @@ jobs:
           Or download `Vroom-macos-arm64.zip`. The app is not notarized: if macOS refuses to open it,
           go to System Settings › Privacy & Security and press **Open Anyway**.
 
+          Once installed, Vroom updates itself (Settings › Recording), never in the middle of a
+          recording, upload or transcription.
+
           ## Windows
 
           `vroom-windows-x64.zip` holds the `vroom` CLI: library, R2 uploads, share links, restore and
           the Loom importer. There is no Windows recorder yet.
           NOTES
-          gh release create "$TAG" Vroom-macos-arm64.zip vroom-macos-arm64.tar.gz vroom-windows-x64.zip SHA256SUMS \
+          gh release create "$TAG" Vroom-macos-arm64.zip vroom-macos-arm64.tar.gz vroom-windows-x64.zip SHA256SUMS SHA256SUMS.sig \
             --title "Vroom $TAG" --notes-file NOTES.md --generate-notes --verify-tag

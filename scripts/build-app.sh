@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build build/Vroom.app (menu bar recorder + the vroom CLI). Works with Command Line Tools only.
-# Signed with VROOM_SIGN_IDENTITY, else "Vroom Local Signing" if it exists
-# (scripts/make-signing-cert.sh), else ad hoc. A stable identity lets macOS keep
-# the Screen Recording permission across rebuilds; ad-hoc signatures change every build.
+# Signed with VROOM_SIGN_IDENTITY, else "Vroom Release Signing" (the identity releases
+# are signed with, docs/RELEASING.md), else "Vroom Local Signing" (scripts/make-signing-cert.sh),
+# else ad hoc. A stable identity lets macOS keep the Screen Recording permission across
+# rebuilds and updates; ad-hoc signatures change every build.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
@@ -52,11 +53,13 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 identity="${VROOM_SIGN_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
-  # scripts/make-signing-cert.sh creates a stable local identity; fall back to ad hoc.
-  if security find-certificate -c "Vroom Local Signing" >/dev/null 2>&1; then identity="Vroom Local Signing"; else identity="-"; fi
+  identity="-"
+  for candidate in "Vroom Release Signing" "Vroom Local Signing"; do
+    if security find-certificate -c "$candidate" >/dev/null 2>&1; then identity="$candidate"; break; fi
+  done
 fi
 # Hardened runtime: other processes can't inject code to borrow the app's
 # Screen Recording, camera and microphone permissions.
 codesign --force --options runtime --sign "$identity" "$app/Contents/Resources/vroom" >/dev/null
 codesign --force --options runtime --entitlements app/Vroom.entitlements --sign "$identity" "$app" >/dev/null
-echo "==> Done: $root/$app"
+echo "==> Done: $root/$app (signed: $identity)"
