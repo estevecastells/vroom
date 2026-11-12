@@ -3601,7 +3601,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vroom"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "keyring",
  "serde",
@@ -3616,7 +3616,7 @@ dependencies = [
 
 [[package]]
 name = "vroom-cloud"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "rusty-s3",
  "serde",
@@ -3630,7 +3630,7 @@ dependencies = [
 
 [[package]]
 name = "vroom-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -3644,7 +3644,7 @@ dependencies = [
 
 [[package]]
 name = "vroom-win"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cpal",
  "eframe",
