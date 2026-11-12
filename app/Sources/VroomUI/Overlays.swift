@@ -134,6 +134,8 @@ final class ControlBar {
 
 private struct ControlBarView: View {
     let model: AppModel
+    /// Discarding deletes the recording for good, so it takes a second click.
+    @State private var confirmingDiscard = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -157,8 +159,19 @@ private struct ControlBarView: View {
                 ProgressView().controlSize(.small).frame(width: 64)
             }
             Divider().frame(height: 20)
-            Button { model.cancelRecording() } label: { Image(systemName: "trash") }
-                .help("Descartar la grabación")
+            if confirmingDiscard {
+                Button { model.cancelRecording() } label: {
+                    Text("¿Descartar?").font(.callout.weight(.semibold)).foregroundStyle(.red)
+                }
+                .help("Pulsa otra vez para borrar la grabación")
+                .task {
+                    try? await Task.sleep(for: .seconds(3))
+                    confirmingDiscard = false
+                }
+            } else {
+                Button { confirmingDiscard = true } label: { Image(systemName: "trash") }
+                    .help("Descartar la grabación")
+            }
         }
         .buttonStyle(.borderless)
         .font(.system(size: 15, weight: .medium))

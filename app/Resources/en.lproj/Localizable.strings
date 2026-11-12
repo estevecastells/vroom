@@ -256,3 +256,5 @@
 "%@ no coincide con su suma de comprobación publicada, así que no se ha instalado." = "%@ doesn't match its published checksum, so it wasn't installed.";
 "A la versión publicada le falta %@." = "The release is missing %@.";
 "La app descargada no parece correcta (%@), así que no se ha instalado." = "The downloaded app looks wrong (%@), so it wasn't installed.";
+"¿Descartar?" = "Discard?";
+"Pulsa otra vez para borrar la grabación" = "Click again to delete the recording";

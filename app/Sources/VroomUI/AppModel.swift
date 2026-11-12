@@ -266,7 +266,7 @@ public final class AppModel {
     var isRecording: Bool { phase != .idle }
 
     public func toggleRecording() {
-        log.info("toggle in phase \(String(describing: self.phase), privacy: .public), screen permission \(Devices.canRecordScreen)")
+        log.notice("toggle in phase \(String(describing: self.phase), privacy: .public), screen permission \(Devices.canRecordScreen)")
         switch phase {
         case .idle: startRecording()
         case .recording: stopRecording()
@@ -376,7 +376,7 @@ public final class AppModel {
         }
         self.recorder = recorder
         phase = .recording(started: Date(), pausedAt: nil, pausedTotal: 0)
-        log.info("recording \(entry.id, privacy: .public): \(String(describing: target), privacy: .public)")
+        log.notice("recording \(entry.id, privacy: .public): \(String(describing: target), privacy: .public)")
         let bar = ControlBar(model: self, on: screen)
         bar.show()
         controls = bar
@@ -396,6 +396,7 @@ public final class AppModel {
 
     func stopRecording() {
         guard case .recording = phase, let recorder, let id = recordingID, let cli else { return }
+        log.notice("stop \(id, privacy: .public)")
         phase = .saving
         closeOverlays()
         Task {
@@ -421,6 +422,7 @@ public final class AppModel {
     }
 
     func cancelRecording() {
+        log.notice("discard in phase \(String(describing: self.phase), privacy: .public)")
         switch phase {
         case .preparing:
             // The start may be stuck waiting on macOS (a permission prompt); don't wait for it.
