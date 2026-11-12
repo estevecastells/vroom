@@ -161,6 +161,7 @@ public final class AppModel {
         await reloadTranscriber()
         // Uploads left over from last time (no network, app quit) resume on their own.
         sync()
+        titleMissing()
         // Retry when the network comes back rather than polling.
         pathMonitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
@@ -678,21 +679,24 @@ public final class AppModel {
     private func drainTranscriptions() async {
         guard let cli else { return }
         while let id = transcribeQueue.first {
+            let warnings = Collected<String>()
             do {
                 try await cli.stream(["transcribe", id]) { event in
                     Task { @MainActor [weak self] in
                         switch event {
                         case let .progress(id, done, total) where total > 0:
                             self?.transcribing[id] = Double(done) / Double(total)
-                        case let .warning(_, message):
-                            self?.lastError = String(localized: "Transcripción: \(message)")
                         default:
                             break
                         }
                     }
+                    if case let .warning(_, message) = event { warnings.append(message) }
                 }
+                // Transcribed; a warning now is about the automatic title (no Anthropic
+                // credits, say). The recording is fine, so a short note, once per session.
+                for message in warnings.items { notifyOnce(message) }
             } catch {
-                // The warning above already said why.
+                lastError = String(localized: "Transcripción: \(warnings.items.first ?? error.localizedDescription)")
                 log.error("transcribe \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
             transcribeQueue.removeFirst()
@@ -700,6 +704,28 @@ public final class AppModel {
             await refresh()
             // New captions go up with the next sync.
             sync()
+        }
+    }
+
+    private var notified: Set<String> = []
+
+    /// A toast that isn't repeated for every recording.
+    private func notifyOnce(_ message: String) {
+        log.error("\(message, privacy: .public)")
+        if notified.insert(message).inserted { show(message) }
+    }
+
+    /// Titles for transcribed recordings still named by date: the ones from a time when
+    /// Anthropic had no credits or the key was missing. Quiet; it tries again next launch.
+    func titleMissing() {
+        guard let cli, config?.hasAnthropicKey == true else { return }
+        Task {
+            do {
+                _ = try await cli.run(["title", "--missing"])
+            } catch {
+                log.notice("title --missing: \(error.localizedDescription, privacy: .public)")
+            }
+            await refresh()
         }
     }
 
@@ -752,6 +778,7 @@ public final class AppModel {
         guard let cli else { return CLIError.missingBinary.localizedDescription }
         do {
             config = try await key.isEmpty ? cli.config(["anthropic", "--clear"]) : cli.config(["anthropic"], stdin: key)
+            titleMissing()
             return nil
         } catch {
             return error.localizedDescription
@@ -795,4 +822,13 @@ public final class AppModel {
         }
         openAtLogin = SMAppService.mainApp.status == .enabled
     }
+}
+
+/// Collects values from a callback that runs on another thread.
+final class Collected<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [T] = []
+
+    func append(_ value: T) { lock.withLock { values.append(value) } }
+    var items: [T] { lock.withLock { values } }
 }

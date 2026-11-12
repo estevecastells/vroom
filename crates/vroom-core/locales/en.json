@@ -146,5 +146,8 @@
   "lista DASH vacía": "empty DASH manifest",
   "lista con demasiados segmentos ({n})": "playlist with too many segments ({n})",
   "plantilla DASH no soportada": "unsupported DASH template",
-  "vídeo DASH cifrado; no soportado": "encrypted DASH video; not supported"
+  "vídeo DASH cifrado; no soportado": "encrypted DASH video; not supported",
+  "la clave de Anthropic no es válida: cámbiala en Ajustes › Transcripción": "the Anthropic key isn't valid: change it in Settings › Transcription",
+  "la clave de Anthropic no tiene permiso para usar la API": "the Anthropic key isn't allowed to use the API",
+  "la cuenta de Anthropic se ha quedado sin créditos": "the Anthropic account has run out of credits"
 }

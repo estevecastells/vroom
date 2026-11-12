@@ -46,9 +46,13 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
         match retitle(ctx, &key, id, force) {
             Ok(Some(entry)) => out.entry(&entry),
             Ok(None) => {}
-            Err(message) => {
+            Err(e) => {
                 failed += 1;
-                out.warning(Some(id), &message);
+                out.warning(Some(id), &e.message);
+                // No credits or a bad key fail every other recording the same way.
+                if e.account {
+                    return Err(e.message);
+                }
             }
         }
     }
@@ -61,12 +65,25 @@ pub fn run(out: &Out, ctx: &Ctx, mut args: Vec<String>) -> Result<(), String> {
 /// After a transcription: a title when there is a key and the recording has its default one.
 pub fn after_transcribe(ctx: &Ctx, id: &str) -> Result<Option<Entry>, String> {
     match secret::anthropic_key()? {
-        Some(key) => retitle(ctx, &key, id, false),
+        Some(key) => retitle(ctx, &key, id, false).map_err(|e| e.message),
         None => Ok(None),
     }
 }
 
-fn retitle(ctx: &Ctx, key: &str, id: &str, force: bool) -> Result<Option<Entry>, String> {
+/// Why a title wasn't written.
+struct TitleError {
+    message: String,
+    /// The account or key is the problem (no credits, revoked key), not this recording.
+    account: bool,
+}
+
+impl From<String> for TitleError {
+    fn from(message: String) -> Self {
+        TitleError { message, account: false }
+    }
+}
+
+fn retitle(ctx: &Ctx, key: &str, id: &str, force: bool) -> Result<Option<Entry>, TitleError> {
     let entry = ctx.lib.entry(id)?;
     if !force && !is_default_title(&entry.meta) {
         return Ok(None);
@@ -130,10 +147,10 @@ pub fn check_key(key: &str) -> Result<(), String> {
         return Ok(());
     }
     let body: Value = resp.body_mut().read_json().unwrap_or_default();
-    Err(api_error(status, &body))
+    Err(api_error(status, &body).message)
 }
 
-fn ask(key: &str, text: &str) -> Result<String, String> {
+fn ask(key: &str, text: &str) -> Result<String, TitleError> {
     let body = json!({
         "model": MODEL,
         "max_tokens": 4000,
@@ -164,7 +181,7 @@ fn ask(key: &str, text: &str) -> Result<String, String> {
         return Err(api_error(status, &reply));
     }
     if reply["stop_reason"] != "end_turn" {
-        return Err(tr!("Anthropic no devolvió un título ({reason})", reason = reply["stop_reason"]));
+        return Err(tr!("Anthropic no devolvió un título ({reason})", reason = reply["stop_reason"]).into());
     }
     let text = reply["content"]
         .as_array()
@@ -172,12 +189,27 @@ fn ask(key: &str, text: &str) -> Result<String, String> {
         .and_then(|b| b["text"].as_str())
         .unwrap_or_default();
     let title: Value = serde_json::from_str(text).map_err(|e| tr!("respuesta de Anthropic ilegible: {e}", e))?;
-    clean(title["title"].as_str().unwrap_or_default()).ok_or_else(|| t("Anthropic devolvió un título vacío"))
+    Ok(clean(title["title"].as_str().unwrap_or_default()).ok_or_else(|| t("Anthropic devolvió un título vacío"))?)
 }
 
-fn api_error(status: u16, body: &Value) -> String {
+fn api_error(status: u16, body: &Value) -> TitleError {
+    let kind = body["error"]["type"].as_str().unwrap_or_default();
     let message = body["error"]["message"].as_str().unwrap_or_default();
-    tr!("Anthropic respondió {status}: {message}", status, message)
+    let account = match (status, kind) {
+        (401, _) | (_, "authentication_error") => {
+            Some(t("la clave de Anthropic no es válida: cámbiala en Ajustes › Transcripción"))
+        }
+        (403, _) | (_, "permission_error") => Some(t("la clave de Anthropic no tiene permiso para usar la API")),
+        (_, "billing_error") => Some(t("la cuenta de Anthropic se ha quedado sin créditos")),
+        _ if message.to_ascii_lowercase().contains("credit balance") => {
+            Some(t("la cuenta de Anthropic se ha quedado sin créditos"))
+        }
+        _ => None,
+    };
+    match account {
+        Some(message) => TitleError { message, account: true },
+        None => tr!("Anthropic respondió {status}: {message}", status, message).into(),
+    }
 }
 
 /// One line, no wrapping quotes or trailing period, at most 120 characters.
@@ -204,6 +236,20 @@ mod tests {
         assert_eq!(clean("  «Configurar R2\n para Vroom».  ").as_deref(), Some("Configurar R2 para Vroom"));
         assert_eq!(clean(" \"\" "), None);
         assert_eq!(clean(&"a".repeat(300)).map(|t| t.chars().count()), Some(120));
+    }
+
+    #[test]
+    fn tells_account_problems_apart() {
+        let credits = json!({"type": "error", "error": {"type": "invalid_request_error",
+            "message": "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}});
+        assert!(api_error(400, &credits).account);
+        assert!(api_error(400, &json!({"error": {"type": "billing_error", "message": "x"}})).account);
+        assert!(
+            api_error(401, &json!({"error": {"type": "authentication_error", "message": "invalid x-api-key"}})).account
+        );
+        let overloaded = api_error(529, &json!({"error": {"type": "overloaded_error", "message": "Overloaded"}}));
+        assert!(!overloaded.account && overloaded.message.contains("529"));
+        assert!(!api_error(400, &json!({"error": {"type": "invalid_request_error", "message": "bad"}})).account);
     }
 
     #[test]
