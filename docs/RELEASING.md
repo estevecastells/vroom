@@ -37,7 +37,9 @@ A secret can't be read back from GitHub, so keep the backups. To restore one: `s
 
 ## Code signing
 
-The app is signed with a self-signed certificate, "Vroom Release Signing". It is not a Developer ID, so a browser download still needs a one-time **Open Anyway** (`get.sh` avoids it because `curl` doesn't set the quarantine flag). What it does give is a stable designated requirement: macOS ties the Screen Recording, camera and microphone permissions to it, so they survive updates. An ad-hoc signature changes with every build and macOS would ask again after each one, which is why the workflow refuses to package without the identity.
+The app is signed with a self-signed certificate, "Vroom Release Signing". It is not a Developer ID, so a browser download still needs a one-time **Open Anyway** (`get.sh` avoids it because `curl` doesn't set the quarantine flag). What it does give is a stable designated requirement: macOS ties the Screen Recording, camera and microphone permissions to it, so they survive updates. An ad-hoc signature changes with every build and macOS would ask again after each one, which is why the workflow refuses to publish without the identity.
+
+The key never shares a job with build code. The `macos` job builds and tests with no secrets (dependency build scripts run there) and uploads an ad-hoc-signed app. The `sign-macos` job checks out only `app/Vroom.entitlements`, imports the identity non-extractable into a temporary keychain that only `codesign` may use, re-signs the app, and deletes the keychain. The `publish` job signs `SHA256SUMS` with `UPDATE_SIGNING_KEY` and runs nothing but the repository's own `scripts/sign-update.swift`.
 
 `scripts/build-app.sh` uses the same identity when it is in your keychain, so a local `make install` and the releases share permissions. Contributors without it get "Vroom Local Signing" (`scripts/make-signing-cert.sh`) or ad hoc.
 
